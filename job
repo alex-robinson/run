@@ -1,0 +1,1027 @@
+#!/usr/bin/python
+#!/home/robinson/apps/python/python/bin/python
+# -*- coding: utf-8 -*-
+
+
+# Import desired modules
+import sys, getopt, os, shutil, datetime
+from subprocess import *
+
+def usage():
+    print '''
+    #### USAGE ####
+      
+      This script will perform actions needed to start running
+      sicopolis (sico.x) or REMBO (rembo.x). This is achieved by
+      (1) reading in the parameter option files, (2) Making any
+      desired parameter changes, (3) generating output directories,
+      including sub-directories, (4) copying parameter files into
+      output directory, (5) generating a loadleveler script to be
+      submitted to the loadleveler queue - if needed, (6) calling
+      the program as a background process, or submitting the job 
+      to the queue.
+      
+      All program output will appear in the desired output directory.
+      
+    #### OPTIONS ####
+    
+      ./job [-h] [-l] [-p executable] [-f] [-o outdir] [-a outdir] [-w ##] [arguments]
+
+      -h   : Help, show this usage menu.
+      
+      -l   : Loadleveler option, use this to submit job to the queue;
+            default is to run the job as a background process
+            
+      -p   : Use this option to specify which program should be called for
+            the job. Default program is 'sico.x'
+            
+      -w   : Wall clock time, specify the wall clock limit in the 
+            loadleveler script ( '-w 1' means the job will be killed
+            after 1 hour)
+            
+      -f   : Force, this will initiate your job without confirmation from
+            the user
+            
+      -o   : Specify the output directory where all program output and 
+            parameter files will be stored.
+            
+      -a   : Specify an output directory, inside of which a subdirectory
+            will be generated based on the parameter arguments 
+            automatically (batch mode, see below)
+      
+      -t   : load some predefined parameter choices. These will be modified 
+             in the correct options files, then command line options 
+             will be applied
+
+    #### ARGUMENTS ####
+    
+      Any arguments will be interpreted as program parameters with
+      values to be modified. Arguments should have the format
+
+        parameter=value
+        
+      where parameter is the name of the program parameter you wish to 
+      modify, and value is the value to give the parameter. This will
+      only work for parameters that appear in the program option file
+      'options_rembo'.
+
+      To modify multiple parameters, separate them with spaces
+
+        parameter1=value1 parameter2=value2
+      
+      To modify multiple parameters, from multiple modules, seperate them with quotes
+        
+        rembo="parameter1=value1" sico="parameter2=value2"
+        
+      For *BATCH RUNS*, separate the values by commas and the 
+      parameters by spaces
+        
+        parameter1=value1,value2 parameter2=value3,value4 
+          
+          or (using multiple modules)
+        
+        rembo="parameter1=value1,value2" sico="parameter2=value3,value4"
+        
+      In either case, the above arguments would create four different 
+      jobs, permuted from the different parameter choices:
+
+        parameter1=value1 parameter2=value3
+        parameter1=value2 parameter2=value3
+        parameter1=value1 parameter2=value4
+        parameter1=value2 parameter2=value4
+          
+    #### EXAMPLES ####
+    
+      ./job
+      
+            run sico.x as background process, output sent to: output/test/
+              
+      ./job -l -o output/run01
+      
+            run sico.x on the cluster, output sent to: output/run01/
+      
+      ./job -l -w 5 -f -a output/runs climchoice=0 pdd_factor=0.8,1,1.2
+      
+            run sico.x on the cluster (-l), 
+            with a wall-clock limit of 5 hours (-w 5),
+            initialize the jobs without confirmation (-f), 
+            automatically generate subfolders inside the
+            directory 'output/runs/' (-a output/runs),
+            based on the parameter choices for the parameters
+            'climchoice' and 'pdd_factor'
+            
+            *Sub-directory names will be generated based
+            on the parameter names and values.
+    
+      ./job -l -w 5 -f -a output/runs rembo="climchoice=0" sico="C_SLIDE_0=10,15"
+            
+            This is the same as previously, except climchoice will be
+            set in the rembo options file, and C_SLIDE_0 will be
+            set in the sico options file.
+    '''
+
+# Some global commands
+llq = '/opt/ibmll/LoadL/full/bin/llq'
+llsubmit = '/opt/ibmll/LoadL/full/bin/llsubmit'
+llcancel = '/opt/ibmll/LoadL/full/bin/llcancel'
+
+def command(cmd,input=""):
+    '''Execute a command and track the errors and output
+       Returns tuple: (output,errors)
+    '''
+    if input == "":
+        proc = Popen(cmd,shell=True,stdout=PIPE,stderr=PIPE)
+        out = proc.communicate()
+    else:
+        proc = Popen(cmd,shell=True,stdout=PIPE,stdin=PIPE,stderr=PIPE)
+        out = proc.communicate(input)
+    
+    return out
+
+# Define parameter classes
+class parameter:
+    '''
+    class to handle parameter input/output/modification
+    '''
+    
+    def __init__(self,name="",units="",value="",line="",desc="",module="empty",string=""):
+        
+        # Get parameter info from string, then from arguments
+        if not string == "":
+            
+            if ( not module == "climber" ):
+                line  = string.partition(":")
+                units = line[0].strip()
+                sep = "="
+                if ":" in line[2]: sep = ":"
+                line  = line[2].partition(sep)
+                name  = line[0].strip()
+                value = line[2].strip()
+                
+                # Also save the initial part of the line for re-writing
+                line = string[0:41]
+            
+            else:
+                line  = string.partition("|")
+                units = ""
+                value = line[0].strip()
+                line  = line[2].partition("|")
+                name  = line[0].strip()
+                
+                line  = string.partition("|")
+                line  = line[2].strip()
+
+        # Assign the local values into the class member    
+        self.name  = name
+        self.units = units
+        self.value = value
+        self.line  = line
+        self.desc  = desc
+        self.module= module
+        self.mod   = False
+        
+        return
+    
+    def __repr__(self):
+        return repr((self.name, self.units, self.value, self.line, self.desc, self.module, self.mod))
+    
+    def short(self):
+        '''Output short string representation of parameter and value.
+           Used for automatic folder name generation.'''
+           
+        # Store the param value as a string
+        # Remove the plus sign in front of exponent
+        # Remove directory slashes, periods and trailing .nc from string values
+        value = "%s" % (self.value)                
+        if "+" in value: value = value.replace('+','')  
+        
+        if "/" in value: value = value.replace('/','')
+        if ".." in value: value = value.replace('..','')
+        if ".nc" in value: value = value.replace('.nc','')
+        
+        # Remove all vowels and underscores from parameter name
+        name = self.name
+        for letter in ['a','e','i','o','u','A','E','I','O','U','_']:
+            name = name[0] + name[1:].replace(letter, '')
+        
+        return ".".join([name,value])
+        
+    def __str__(self):
+        '''Output a string suitable for parameter file'''
+
+        if not self.line == "" and not self.module == "climber":
+            return "{} {}".format(self.line,self.value)
+        elif not self.line == "":
+            # return "%s   | %s" % (self.value,self.line)
+            return " {:<9}| {}".format(self.value,self.line)
+        else:
+            return "{} : {} = {}".format(self.module,self.name,self.value)
+
+class parameters(parameter):
+    '''
+    This class encapsulates all other classes, and handles
+    input and output of entire groups of parameters.
+    parameters has parameter
+    '''
+    
+    def __init__(self,file="",comment="#"):
+        '''Initialize instance by loading file containing parameters.'''
+        
+        # Store the file name
+        self.file = file
+        
+        # Initialization
+        self.all = []
+
+        if self.file == "":
+            # Generate an empty parameter set of one empty parameter
+            X = parameter()
+            self.all.append(X)
+
+        else:
+            # Load all parameters from the input file
+            
+            # Make sure file exists, otherwise generate one
+            try:
+                self.lines = open(self.file,'r').readlines()
+            except:
+                print "File could not be opened: "+self.file+'\n'
+                raise
+       
+            # Loop to find parameters and load them into class
+            if self.file in ("options_rembo","options_sico"):
+                
+                # Loop through lines and determine which parts correspond to
+                # parameters, store these parts in self.all
+                for line in self.lines:    
+                    first = ""
+                    if len(line) > 41: first = line.strip()[0]
+                    if not first == "" and not first == comment and line[40] in ("=",":"):
+                        X = parameter(string=line)
+                        self.all.append(X)
+            else:  # climber option file 'run'
+                
+                # Loop through lines and determine which parts correspond to
+                # parameters, store these parts in self.all
+                for line in self.lines:     
+                    first = line.strip()[0]
+                    if not first == "" and not first == "=":
+                        X = parameter(string=line,module="climber")
+                        self.all.append(X)
+
+        return
+
+    def __str__(self):
+        '''Output list of parameters'''
+        
+        ll = []
+        for p in self.all: ll.append(p.__str__())
+            
+        return "\n\n".join(ll)
+    
+    def printer(self,mod=False):
+        
+        for p in self.all:
+            if not mod:
+                print p.__str__()
+            elif p.mod:
+                print p.__str__()
+        
+        return
+            
+    def write(self,file):
+        '''Write a file of all lines in parameter set'''
+        
+        try:
+            newfile = open(file,'w')
+            for line in self.lines: newfile.write(line)
+            newfile.close()
+            print "Parameter file written: %s" % (file)
+        except:
+            print "Error::p.write: %s not written" % (file)
+            sys.exit(2)
+            
+        return
+        
+    def err(self,exit=2,message="unknown"):
+        '''Print an error'''
+        
+        print "Error in %s: %s" % (self.file,message)
+        print ""
+        if exit >= 0: sys.exit(exit)
+        
+        return
+    
+    def get(self,name):
+        '''Return a specific parameter based on the name'''
+        
+        for p in self.all:
+            if p.name == name: 
+                return p
+        
+        self.err(2,message=name+" not found.")
+        return
+    
+    def set(self,name="",value="",param=""):
+        '''Define the value of a given parameter'''
+        
+        # If a parameter is given as argument, take name and value from it
+        if name=="":
+            name  = param.name
+            value = param.value
+        
+        # Loop over all parameters in set and find the correct one,
+        # store new value in its place
+        found = False
+        for p in self.all:
+            if p.name == name: 
+                p.value = value; p.mod = True
+                found = True
+                break
+        
+        # Also make sure to correct the line as needed
+        if found:
+            k = 0
+            for line in self.lines:
+                if p.line in line:
+                    if not p.module == "climber":
+                        self.lines[k] = "%s  %s \n" % (p.line,p.value)
+                    else:
+                        self.lines[k] = " {:<9}| {} \n".format(p.value,p.line)
+                    break
+                k = k + 1
+        
+            return p
+
+        self.err(2,message=name+" not found.")            
+        return
+    
+    def exchange(self,pset=1,file="param_exchange.txt",comment="#",sep=":"):
+        '''Exchange parameter values between modules (converting them as needed)'''
+        
+        # Open the parameter exchange file
+        try:
+            flines = open(file,'r').readlines()
+        except:
+            print "Error: unable to open parameter exchange file: "+file+"\n"
+            sys.exit(2)
+            
+        #Fill in lists for conversion
+        p1 = []; p2 = []; convert = []
+        
+        for line in flines:
+            if len(line.strip()) > 0:
+                if not line.strip()[0] == comment and sep in line:
+                    l0 = line.split("=")
+                    convert.append(l0[1].strip())
+                    l1 = l0[0].split(sep)
+                    p1.append(l1[0].strip())
+                    p2.append(l1[1].strip())
+        
+        # Loop over all exchanges to be made, exchange values!
+        for k in range(len(p1)):
+            #print "%s : %s  %s" % (p1[k],p2[k],convert[k])
+            
+            valnow = pset.get(p1[k]).value
+            
+            if not convert[k] == "1":
+                con = float(convert[k])
+                val = float(valnow)
+                valnow = "%g" % (con*val)
+                #valnow = valnow.replace("+","")
+                
+            pnow = self.set(name=p2[k],value=valnow)
+            
+            print pnow
+        
+        return
+    
+def autofolder(params,outfldr0):
+    '''Given a list of parameters,
+       generate an appropriate folder name.
+    '''
+    
+    parts = []
+    
+    for p in params:
+        parts.append( p.short() )
+        
+    # Join the parts together, combine with the base output dir
+    autofldr = '.'.join(parts)
+    outfldr  = outfldr0 + autofldr + '/'
+    
+    return outfldr
+    
+def makedirs(dirname):
+    '''
+    Make a directory (including sub-directories),
+    but first ensuring that path doesn't already exist
+    or some other error prevents the creation.
+    '''   
+    
+    try:
+        os.makedirs(dirname)
+        print     'Directory created: ', dirname
+    except OSError:
+        if os.path.isdir(dirname):
+            print 'Directory already exists: ', dirname
+            pass
+        else:
+            # There was an error on creation, so make sure we know about it
+            raise
+
+    return
+
+def combiner(a):
+    '''a = [[1,2],[3,4,5],[6],[7,8,9,10]]
+    '''
+    r=[[]]
+    for x in a:
+        t = []
+        for y in x:
+            for i in r:
+                t.append(i+[y])
+        r = t
+
+    return(r)
+
+def parse_args(args=[],force=False):
+    '''Loop over provided arguments and separate them into parameter names and values.
+       Default is to assume they are 'rembo' parameters.
+       
+       eg, "melt_choice=1 pdd_factor=1"
+       eg, "rembo="melt_choice=1 pdd_factor=1" sico="dtime_ser=50"
+    '''
+    
+    params = []; module = []
+    
+    # Sort the arguments
+    args.sort()
+    
+    # Loop over the arguments and parse them into separate parameters
+    if 'rembo=' in " ".join(args) or 'sico=' in " ".join(args) \
+      or 'climber=' in " ".join(args):
+
+        for arg in args:        
+            now = "none"
+            if 'rembo='   in arg: now = "rembo"
+            if 'sico='    in arg: now = "sico"   
+            if 'climber=' in arg: now = "climber"
+            
+            if not now == "none":
+                tmp = arg.partition("=")
+                tmp = tmp[2].split()
+                tmp.sort()
+                
+                for p in tmp:
+                    params.append(p)
+                    module.append(now)
+            else:
+                print "\nArguments should be encapsulated by the module name,"
+                print 'eg, rembo="pname1=5" sico="pname2=10"\n'
+                sys.exit(2)
+            
+    else: # only the default module parameters will be loaded
+        for arg in args: 
+            params.append(arg)
+            module.append("rembo")
+    
+    # Check values of arguments
+    print ""
+    k = 0
+    for p in params:
+        m = module[k]; k = k + 1
+        print m + ":" + p
+    
+    if not force:
+        try:
+            response = raw_input("\n[Enter to proceed] or [ctl-c to exit]")
+            print "\n"
+        except:
+            print "\n"
+            sys.exit()
+    
+    
+    names = []; values = []
+    
+    for p in params:
+        if "=" not in p:
+            print 'Error::parse_args: parameter names and values must be separated by "="'
+            print ''
+            sys.exit(2)
+        
+        # Separate term into name and value(s)
+        tmp = p.split("=")
+        
+        name = tmp[0]
+        vals = [tmp[1]]
+        if "," in tmp[1]: vals = tmp[1].split(",")
+        
+        names.append(name)
+        values.append(vals)
+    
+    # Set up an initial list to store all parameter sets (1 set per run)
+    batch = []   
+    
+    # Make all permutations of parameter options
+    allvalues = combiner(values)
+    
+    # Loop over each set of parameter values
+    for values in allvalues:
+        
+        # Initialize the current new set of parameters
+        set = []
+        
+        for k in range(len(names)):
+            
+            # Generate a new parameter and store in the set
+            X = parameter(name=names[k],value=values[k],module=module[k])
+            set.append(X)
+        
+        # Save the set inside the batch list
+        batch.append(set)
+    
+    ## Check what has been created ##
+##    for b in batch:
+##        print "Batch set ====="
+##        for p in b:
+##            print p
+    
+    return batch    
+    
+def jobscript(executable,outfldr,username,usergroup,wtime):
+    '''Definition of the job script'''
+
+    script = """#!/bin/ksh
+# @ class = medium
+# @ group = %s
+# @ job_type = serial
+# @ as_limit = unlimited
+# @ data_limit = unlimited
+# @ stack_limit = unlimited
+# @ file_limit = unlimited
+# @ nofile_limit = unlimited
+# @ core_limit = unlimited
+# @ executable = %s
+# @ arguments =  "%s"
+# @ input = /dev/null
+# @ output = %sout.out
+# @ error = %sout.err
+# @ notify_user = %s@pik-potsdam.de
+# @ notification = complete
+# @ Wall_clock_limit = %s:00:00
+# @ checkpoint = no
+# @ queue
+
+ulimit -c unlimited
+ulimit -s unlimited
+ulimit -d unlimited
+ulimit -m unlimited
+ulimit -v unlimited
+ulimit -f unlimited
+ulimit -a
+"""  % (usergroup,executable,outfldr,outfldr,outfldr,username,wtime)
+# Extra options
+# @ resources = ConsumableMemory (2500 mb)
+
+    return script
+    
+def makejob(params,out,wtime,executable,auto=False,force=False,edit=False,submit=False,case="none"):
+    '''Given a set of parameters, generate output folder and
+       set up a job, then submit it.
+    '''
+    
+    # Make an output prefix if running climber coupled to sicopolis
+    prefix = ""
+    if executable == "sicoX.x": prefix = "climber25/"
+
+    nm_jobscript = 'job.submit'    # Name of job submit script  
+    o1 = "options_rembo"           # Names of options files
+    o2 = "options_sico"  
+    o3 = "run"
+
+    # Generate a name for the output folder, if desired
+    if auto:
+        outfldr = autofolder(params,out)
+    else:
+        outfldr = out
+        
+    # First generate some empty data sets for each module
+    p_rembo   = parameters()
+    p_sico    = parameters()
+    p_climber = parameters()
+    
+    # Now load the relevant default parameter files
+    if executable in ("rembo.x","sico.x","sicoX.x"): p_rembo   = parameters(file=o1)
+    if executable in ("sico.x","sicoX.x"):           p_sico    = parameters(file=o2)
+    if executable in ("sicoX.x","climber.exe","climber.x"): 
+                                                     p_climber = parameters(file=prefix + o3)
+
+    # Store parameter lists as new objects for modification and output
+    p_rembo1   = p_rembo
+    p_sico1    = p_sico
+    p_climber1 = p_climber
+    p_climber1 = p_climber
+    
+    ## SPECIAL PREDEFINED CASES
+    # Check if we are running any special predefined cases
+    if not case == "none": print "case = " + case + "\n"
+
+    if case == "default":
+        p_rembo1.set(name="clim_coupled",value="-1")
+        
+        # Time variables
+        yearf = float(p_rembo1.get(name="year0").value) + 200.0
+        p_rembo1.set(name="yearf",value=yearf)
+        p_rembo1.set(name="dtime_emb",value=10)
+        p_rembo1.set(name="dtime_smb",value=1)
+        p_rembo1.set(name="dto_clim",value=10)
+        p_rembo1.set(name="dto_clim2d",value=int(yearf))
+        
+        # Modify for tuning...
+        if p_rembo1.get(name="tuning").value == "1":
+            p_rembo1.set(name="dto_clim2d",value=20)
+
+        # Output variables
+        p_rembo1.set(name="write_rembo_r",value=0)
+        
+        # For checking smb differences
+        #p_rembo1.set(name="T_warming_delay",value=200)
+        p_rembo1.set(name="T_trans_max",value=0)
+        
+        # Switches
+        p_rembo1.set(name="equili",value=0)
+        p_rembo1.set(name="transient",value=0)
+        
+    elif case == "rembohyst":
+        # Modify some parameters for rembo hysteresis
+
+        p_rembo1.set(name="clim_coupled",value="-2")
+        
+        # Switches
+        p_rembo1.set(name="equili",value=0)
+        p_rembo1.set(name="transient",value=0)
+        
+        # Determine the final year as a function of the 
+        # temperature rate of change and the number of degrees
+        # we want to move (4.5degC)
+        T_diff = float(p_rembo1.get(name="T_diff").value)
+        T_delay = int(p_rembo1.get(name="T_warming_delay").value)
+        yearf  = int( 10.0 / (T_diff / 1e6)) + T_delay
+        p_rembo1.set(name="yearf",value="%i" % (yearf) )
+
+    elif case == "PDDF":
+        # Modify some parameters for rembo hysteresis
+
+        # Switches
+        p_rembo1.set(name="clim_coupled",value="-2")
+        p_rembo1.set(name="slow_hyst", value=2)
+        p_rembo1.set(name="transient",value=0)
+        p_rembo1.set(name="equili",   value=1)
+        p_rembo1.set(name="n_equili", value=50)
+        p_rembo1.set(name="write_rembo_r", value=0) 
+        #p_rembo1.set(name="write_rembo_m", value=1) # Not useful until multiple years of monthly output can be generated
+        
+        # Output
+        p_rembo1.set(name="dtime_emb",value=10)
+        p_rembo1.set(name="dtime_smb",value=1)
+        p_rembo1.set(name="dto_clim",value=10)
+        p_rembo1.set(name="dto_clim2d",value=50)
+
+        # Temperature anomalies from -1 => 6 K at rate of 1 K / 100 a 
+        p_rembo1.set(name="T_warming",value=-1.0)
+        p_rembo1.set(name="T_diff",   value= 6.0)
+        p_rembo1.set(name="dT_rate",  value=0.01)  # Warming rate [K/a]
+
+        # Determine the final year as a function of the 
+        # temperature rate of change and the number of degrees
+        # we want to move (4.5degC)
+        T_diff  = float(p_rembo1.get(name="T_diff").value)
+        dT_rate = float(p_rembo1.get(name="dT_rate").value)
+        T_delay = int(p_rembo1.get(name="T_warming_delay").value)
+        yearf   = int( T_diff / dT_rate ) + T_delay
+        p_rembo1.set(name="yearf",value="%i" % (yearf) )
+
+    ## END SPECIAL PREDEFINED CASES
+
+    # Loop over command line parameters and modify parameter lists
+    for p in params:
+        if p.module == "rembo":
+            p_rembo1.set(name=p.name,value=p.value)
+        elif p.module == "sico":
+            p_sico1.set(name=p.name,value=p.value)
+        elif p.module == "climber":
+            p_climber1.set(name=p.name,value=p.value)
+        else:
+            print "Error::makejob: bad module name: "+p.module
+    
+    ## SPECIAL CASES 2: need to be applied after modifying parameters ##
+
+    # First fix restart file according to basic formula
+    # Modify restart filename to match itm_c choice
+    # tmp = p_rembo1.get(name="restart_file").value
+    # if "itm" in tmp:
+    #     itm   = p_rembo1.get(name="itm_c").value
+    #     restart_file = "../restart.000.itmc.%s.nc" % (itm)
+    #     p_rembo1.set(name="restart_file",value=restart_file)
+    
+    # Now check individual case requirements
+    if case == "rcp":
+        # Modify forcing filenames for RCP simulations
+
+        part1 = p_rembo1.get(name="rcpfldr").value
+        part2 = p_rembo1.get(name="rcpname").value
+        part3 = p_rembo1.get(name="rcpquantile").value
+        
+        forcing_file = "%s/rcp%s.grl.q%s.txt" % (part1,part2,part3)
+        p_rembo1.set(name="forcing_file",value=forcing_file)
+
+    elif case == "basins":
+        # Check if running basin simulations, using fractional restart files,
+        # change restart filename accordingly
+        #if not ".nc" in p_rembo1.get(name="restart_file").value:
+        
+        part1 = p_rembo1.get(name="restart_file").value
+        itm   = p_rembo1.get(name="itm_c").value
+        
+        if "itm" in part1:
+            part1 = "restart.000.itmc.%s" % (itm)
+            
+        restart_file = "../%s.nc" % (part1)
+        p_rembo1.set(name="restart_file",value=restart_file)
+
+    elif case == "pps":
+        # Modify forcing filenames to match pliopleistocene sims
+
+        part1 = p_rembo1.get(name="ppsname").value
+        forcing_file = "in_rembo/PPS/%s.climber_paleoT.dat" % (part1)
+        p_rembo1.set(name="forcing_file",value=forcing_file)
+        
+        # Also modify SICO sea level file
+        p_sico1.set(name="SEA_LEVEL_FILE",value=forcing_file)
+    
+    elif case == "cumco2":
+        # Modify forcing filenames to match Mahe's files
+        
+        part1 = p_rembo1.get(name="cumco2name").value
+        part2 = p_rembo1.get(name="cumco2").value
+        forcing_file = "in_rembo/cumco2/%s.%s/OUT/coupling_grl.nc" % (part1,part2)
+        p_rembo1.set(name="forcing_file",value=forcing_file)
+
+        # Modify restart filename to match itm_c choice
+        itm   = p_rembo1.get(name="itm_c").value
+        restart_file = "../restart.000.itmc.%s.nc" % (itm)
+        p_rembo1.set(name="restart_file",value=restart_file)
+
+    elif case[0:7] == "restart":
+        # Find restart file, assuming it comes from a previous directory
+
+        outfldr00 = "%s/%s/" % ("../..",case.replace("restart:",""))
+        outfldr0 = autofolder(params,outfldr00)
+        restart_file0 = p_rembo1.get(name="restart_file").value
+        restart_file = "%s%s" % (outfldr0,restart_file0)
+        p_rembo1.set(name="restart_file",value=restart_file)
+
+    ## END SPECIAL CASES 2
+
+
+
+    ## PARAMETER CONSISTENCY CHECKS ##
+    
+    if not executable == "climber.exe":
+        # Only relevant to sico.x, sicoX.x and rembo.x
+
+        # Make sure value of clim_coupled is negative, if running rembo.x
+        if executable == "rembo.x" and not "-" in p_rembo1.get(name="clim_coupled").value:
+            p_rembo1.set(name="clim_coupled",value="-1")
+    
+        # Make sure that the emb and smb time step is less than or equal to 
+        # the averaging period of the boundary data (if boundary conditions are transient)
+        if not p_rembo1.get(name="bnd_trans").value == "0":
+            bnd_ave = float(p_rembo1.get(name="bnd_ave").value)
+            if float(p_rembo1.get(name="dtime_emb").value) > bnd_ave:
+                p_rembo1.set(name="dtime_emb",value="%f" % (bnd_ave) )
+            if float(p_rembo1.get(name="dtime_smb").value) > bnd_ave:
+                p_rembo1.set(name="dtime_smb",value="%f" % (bnd_ave) )
+    
+        # Make sure rembo choices are correct if running sico only
+        if p_rembo1.get(name="clim_coupled").value == "0":
+            p_rembo1.set(name="equili",value=0)
+            p_rembo1.set(name="climchoice",value=0)
+            p_rembo1.set(name="dtime_smb",value=0)
+
+    
+    ## END CONSISTENCY CHECKS ##
+
+    # Output a separator
+    print "============================================================"
+  
+    # Print info to screen
+    print "\nOutput directory: " + outfldr
+    print "\nModified parameters: REMBO"
+    p_rembo1.printer(mod=True)
+    
+    if executable in ("sico.x","sicoX.x"):
+        print "\nModified parameters: SICO"
+        p_sico1.printer(mod=True)
+        
+        # Additionally, exchange parameter values between modules
+        if not executable == "climber.exe":
+            print "\nExchanged parameters: SICO"
+            p_sico1.exchange(pset=p_rembo1,file="param_exchange.txt")
+    
+    if executable == "sicoX.x":
+        
+        # Adjust time manually (so that integers are written to file!)
+        NYRSR = float(p_rembo1.get(name="year0").value)
+        p_climber1.set(name="NYRSR",value="{:d}".format(int(NYRSR)))
+
+        NYRMX = float(p_rembo1.get(name="yearf").value) - float(p_rembo1.get(name="year0").value)
+        p_climber1.set(name="NYRMX",value="{:d}".format(int(NYRMX)))
+        
+        # Adjust restart manually...
+        #KLSR = int(p_rembo1.get(name="anf_dat").value) - 1
+        #p_climber1.set(name="KLSR",value="{:d}".format(int(KLSR)))
+
+        print "\nModified parameters: CLIMBER"
+        p_climber1.printer(mod=True)
+        
+        # Additionally, exchange parameter values between modules
+        print "\nExchanged parameters: CLIMBER"
+        p_climber1.exchange(pset=p_rembo1,file="param_exchange2.txt")
+
+        
+    response = ""   # Default response is nothing, check if another is given
+    if not force:
+        try:
+            response = raw_input("\n[Enter to submit the job]  or  [s to skip] or [ctl-c to exit] ")
+            print "\n"
+        except:
+            print "\n"
+            sys.exit()
+    
+    # Skip the job if desired
+    if response == "s":
+    
+        print "Job not started, skipping."
+    
+    # Otherwise, get it started!!
+    else:
+          
+        # Make the outfldr directory and observations sub directory automatically
+        makedirs(outfldr + "obs")
+
+        # Write the parameter files to the output directory
+        if not executable == "climber.exe": p_rembo1.write(outfldr+o1)
+        if executable in ("sico.x","sicoX.x"): p_sico1.write(outfldr+o2)
+        
+        if executable in ("sicoX.x","climber.exe"): 
+
+            # Make climber related output directories
+            makedirs(outfldr + "OUT")
+            #makedirs(outfldr + "INP")
+            #makedirs(outfldr + "REST")
+            #makedirs(outfldr + "SIMENV")
+            #makedirs(outfldr + "FTO")
+            
+            # Copy files of interest
+            #shutil.copy(prefix + "INP/ocean_mod.dat",  outfldr + "INP/")
+            #shutil.copy(prefix + "INP/vegetat_mod.dat",outfldr + "INP/")
+
+            # Write the climber parameter file
+            p_climber1.write(outfldr+o3)
+
+        # Copy additional files of interest
+        # *NONE YET* #
+        
+        if submit:
+            # Make the job run script with the out folder argument
+            
+            username = os.environ.get('USER')  # Get the current username
+            usergroup = "tumble"
+            if ( username in ("perrette")): usergroup = "primap"
+
+            # Create the jobscript using current info
+            script = jobscript(executable,outfldr,username,usergroup,wtime)
+            
+            jobfile1 = open(nm_jobscript,'w').write(script)
+            jobfile2 = open(outfldr + nm_jobscript,'w').write(script)
+            
+            # Copy the job script into output directory for posterity
+            if os.path.isfile (outfldr + nm_jobscript): 
+                print "Created jobscript file(s): " + nm_jobscript
+            
+            # Send the submit command to loadleveler
+            stat = command("%s %s" % (llsubmit,nm_jobscript))
+            print stat[0]
+            
+            # Check to see if job has actually been submitted
+            proc = command("%s -u %s" % (llq,username))
+            jobsCheck = proc[0]
+            
+            if "currently no job" in jobsCheck:
+                print "Error in llsubmit: job does not appear in queue!"
+                sys.exit(2)
+                            
+        else:   # Just run job in background
+            print "Running job in background: %s" % (executable)
+            #print "Storing output in: %s" % (outfldr)
+            try:
+                os.system ("./%s %s > %s &" % (executable,outfldr,outfldr+"out.out"))
+                #os.system ("%s %s" % (executable,outfldr))
+            except err:
+                print "\n     ",str(err)
+                sys.exit(2)
+
+    return outfldr
+    
+def main():
+        
+    # Default values of options #
+    executable = 'sico.x'        # Exectutable program (default: sico.x)
+    submit     = False           # Submit the job to loadleveler (default: no)
+    edit       = False           # Interactive editing of options
+    outfldr    = 'output/test/'  # Default output folder is just the outbase
+    auto       = False
+    force      = False
+    wtime      = "24"            # Default wall clock time is 24 hours
+    case       = "none"          # No special simulation case is being run
+
+    # Get a list of options and arguments
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "hlep:o:a:fw:t:", ["help", "program=","edit=","out=","auto=","wall="])
+    except getopt.GetoptError, err:
+        # print help information and exit:
+        usage()
+        print "\n    ",str(err) # will print something like "option -a not recognized"
+        sys.exit(2)
+        
+    # Cycle through options
+    for o, a in opts:
+        if o in ("-h", "--help"):
+            usage()
+            sys.exit()
+        elif o in ("-p", "--program"):
+            executable = a              # Executable program is input argument
+        elif o in ("-l"):
+            submit = True               # Job will be submitted to loadleveler
+        elif o in ("-e", "--edit"):
+            edit   = True               # User will interactively edit options
+        elif o in ("-f"):
+            force   = True              # Jobs will start without user confirmation
+        elif o in ("-o", "--out"):
+            outfldr = a + '/'
+        elif o in ("-a", "--auto"):
+            auto = True                 # No automatic folder generation, use user choice
+            outfldr = a + '/'
+        elif o in ("-w", "--wall"):
+            wtime = a
+        elif o in ("-t"):
+            case = a
+        else:
+            assert False, "unhandled option"
+    
+    # Get the batch parameter sets from the arguments
+    # (returns an empty set if no parameters should be changed)
+    batch = parse_args(args,force=force)
+    
+    # Make sure that if generating multiple runs
+    # that the --auto option has been used
+    if len(batch) > 1 and not auto:
+        print "\nError: automatic folder generation must be used for batch processing!\n"
+        sys.exit(2)
+        
+    # Loop over the parameter sets and make jobs
+    joblist = []
+    for params in batch:
+        
+        # Go through job setup and submit process
+        fldr = makejob(params,outfldr,wtime,executable,auto,force,edit,submit,case)
+    
+        joblist.append(fldr)
+    
+    # Write the job list to a file
+    # (make the output folder relative to the output/ directory)
+    joblist  = "\n".join(joblist)
+    joblist1 = joblist.replace("output/","")
+    joblist1 = joblist1.replace("outtmp/","")
+    
+    try:
+        if os.path.isfile(outfldr+"batch"):
+            open(outfldr+"batch","a").write("\n"+joblist1)
+        else:
+            open(outfldr+"batch","w").write(joblist1)
+        
+        print "Output folder(s):\n"
+        print joblist
+        print "\n"
+        
+    except:
+        print "Unable to write batch list to " + outfldr
+
+    return
+    
+    
+if __name__ == "__main__":
+    main()
+# Done!

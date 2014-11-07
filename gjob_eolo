@@ -1,0 +1,830 @@
+#!/usr/bin/python
+#!/home/robinson/apps/python/python/bin/python
+# -*- coding: utf-8 -*-
+
+
+# Import desired modules
+import sys, getopt, os, shutil, datetime
+from subprocess import *
+
+def usage():
+    print '''
+    #### USAGE ####
+      
+      This script will perform actions needed to start running
+      GRISLI on the cluster EOLO. This is achieved by
+      (1) Reading in the parameter namelist file
+      (2) Making any desired parameter changes
+      (3) Generating output directories, including sub-directories
+      (4) Copying the parameter file, executable and other files into output directory
+      (5) Generating a qsub script
+      (6) Submitting the job to the queue
+      
+      All program output will appear in the desired output directory.
+      
+    #### OPTIONS ####
+    
+      python ./gjob_eolo [-h] [-l] [-p executable] [-f] [-o outdir] [-a outdir] [-w ##] [arguments]
+
+      -h   : Help, show this usage menu.
+      
+      -l   : Loadleveler option, use this to submit job to the queue;
+            default is to run the job as a background process
+            
+      -p   : Use this option to specify which program should be called for
+            the job. Default program is 'sico.x'
+            
+      -w   : Wall clock time, specify the wall clock limit in the 
+            loadleveler script ( '-w 1' means the job will be killed
+            after 1 hour)
+            
+      -f   : Force, this will initiate your job without confirmation from
+            the user
+            
+      -o   : Specify the output directory where all program output and 
+            parameter files will be stored.
+            
+      -a   : Specify an output directory, inside of which a subdirectory
+            will be generated based on the parameter arguments 
+            automatically (batch mode, see below)
+      
+    #### ARGUMENTS ####
+    
+      Any arguments will be interpreted as program parameters with
+      values to be modified. Arguments should have the format
+
+        \&group1="par1=value par2=value" \&group2="par1=value par2=value"
+      
+      where \&group is the group name in the namelist file and par1, par2, etc.
+      are the names of the parameters in each group that will be modified. 
+      This will only work for parameters that appear in the GRISLI namelist file
+      'grisli_param_list.nml'.
+
+      To modify multiple parameters, separate them with spaces
+
+        \&group1="par1=value par2=value"
+      
+      To modify multiple parameters, from multiple groups, seperate them with quotes
+        
+        \&group1="par1=value" \&group2="par2=value"
+        
+      For *BATCH RUNS*, separate the values by commas and the 
+      parameters by spaces
+        
+        \&group1="par1=value1,value2 par2=value3" \&group2="par3=value4,value5"
+          
+      The above arguments would create four different 
+      jobs, permuted from the different parameter choices:
+
+        par1=value1 par2=value3 par3=value4
+        par1=value2 par2=value3 par3=value4
+        par1=value1 par2=value3 par3=value5
+        par1=value2 par2=value3 par3=value5
+          
+    #### EXAMPLES ####
+    
+      python ./gjob_eolo -l -o output/run01
+      
+            run Antar-40 on the cluster [-l] with default parameter values,
+            output sent to: output/run01/ [-o output/run01]
+      
+      python ./gjob_eolo -l -f -a output/runs \&param_hydr="hmax_till=20  poro_till=0.4,0.5,0.6"
+      
+            run Antar-40 on the cluster [-l], 
+            initialize the jobs without confirmation [-f], 
+            automatically generate subfolders inside the
+            directory 'output/runs/' [-a output/runs],
+            based on the parameter choices for the parameters
+            'hmax_till' and 'poro_till'
+            
+            *Sub-directory names will be generated based
+            on the parameter names and values.
+    '''
+
+# Some global commands
+llq = '/opt/ibmll/LoadL/full/bin/llq'
+llsubmit = '/opt/ibmll/LoadL/full/bin/llsubmit'
+llcancel = '/opt/ibmll/LoadL/full/bin/llcancel'
+
+def command(cmd,input=""):
+    '''Execute a command and track the errors and output
+       Returns tuple: (output,errors)
+    '''
+    if input == "":
+        proc = Popen(cmd,shell=True,stdout=PIPE,stderr=PIPE)
+        out = proc.communicate()
+    else:
+        proc = Popen(cmd,shell=True,stdout=PIPE,stdin=PIPE,stderr=PIPE)
+        out = proc.communicate(input)
+    
+    return out
+
+# Define parameter classes
+class parameter:
+    '''
+    class to handle parameter input/output/modification
+    (only valid for namelist parameter files now!)
+    '''
+    
+    def __init__(self,group,name="",units="",value="",line="",comment="",module=""):
+        
+        # Get parameter info from line, then from arguments
+        if not line == "":
+            tmp = self.parseline_nml(line)
+            name    = tmp['name']
+            value   = tmp['value']
+            units   = tmp['units']
+            comment = tmp['comment']
+
+        # Assign the local values into the class member
+        self.name    = name
+        self.units   = units
+        self.value   = value
+        self.line    = line
+        self.comment = comment
+        self.group   = group 
+        self.module  = module
+        self.mod     = False
+        
+        return
+    
+    
+    def parseline_nml(self,line):
+        '''Parse line from a namelist file.'''
+
+        tmp     = line.split("!")
+        par     = tmp[0]
+        
+        comment = ""
+        if len(tmp)>1: comment = tmp[1].strip()
+
+        tmp     = par.split("=")
+        name    = tmp[0].strip()
+        value   = tmp[1].strip()
+
+        # Check if comment contains units
+        units = ""
+        if "[" in comment:
+            tmp   = comment.split("[")[1]
+            units = tmp.split("]")[0]
+
+        if not comment == "": comment = "! " + comment 
+
+        return dict(name=name,value=value,units=units,comment=comment)
+
+    def parseline_REMBOv1(self):
+
+        return 
+
+    def parseline_climber(self):
+
+        return 
+
+    def __repr__(self):
+        return repr((self.line,self.name,self.value,self.units,self.group,
+                     self.comment,self.mod))
+    
+    def short(self):
+        '''Output short string representation of parameter and value.
+           Used for automatic folder name generation.'''
+           
+        # Store the param value as a string
+        # Remove the plus sign in front of exponent
+        # Remove directory slashes, periods and trailing .nc from string values
+        value = "%s" % (self.value)                
+        if "+" in value: value = value.replace('+','')  
+        
+        if "/" in value: value = value.replace('/','')
+        if ".." in value: value = value.replace('..','')
+        if ".nc" in value: value = value.replace('.nc','')
+        
+        # Remove all vowels and underscores from parameter name
+        name = self.name
+        for letter in ['a','e','i','o','u','A','E','I','O','U','_']:
+            name = name[0] + name[1:].replace(letter, '')
+        
+        return ".".join([name,value])
+        
+    def __str__(self):
+        '''Output a string suitable for a namelist parameter file'''
+
+        if type(self.value is str):
+            return "{} = {} {}".format(self.name,self.value,self.comment)
+        else: 
+            return "{} = {:<9} {}".format(self.name,self.value,self.comment)
+
+class parameters(parameter):
+    '''
+    This class encapsulates all other classes, and handles
+    input and output of entire groups of parameters.
+    parameters has parameter
+    '''
+    
+    def __init__(self,file="",comment="!"):
+        '''Initialize instance by loading file containing parameters.'''
+        
+        # Store the file name
+        self.file = file
+        
+        # Initialization
+        self.all = []
+
+        if self.file == "":
+            # Generate an empty parameter set of one empty parameter
+            X = parameter(group="")
+            self.all.append(X)
+
+        else:
+            # Load all parameters from the input file
+            
+            # Make sure file exists, otherwise generate one
+            try:
+                self.lines = open(self.file,'r').readlines()
+            except:
+                print "File could not be opened: "+self.file+'\n'
+                raise
+       
+            # Loop to find parameters and load them into class
+            if ".nml" in self.file:
+                
+                # Loop through lines and determine which parts correspond to
+                # parameters, store these parts in self.all
+                inGroup = False 
+
+                self.groups = []
+
+                for line in self.lines:
+                    line1 = line.strip()
+                    if not len(line1)==0 and not line1[0]=="!":
+
+                        if     inGroup and line1[0] == "/": 
+                            inGroup = False 
+                            pass 
+
+                        if not inGroup and line1[0] == "&": 
+                            group   = line1.split()[0].strip("&")
+                            if not group in self.groups: self.groups.append(group)
+                            inGroup = True 
+                            pass 
+
+                        if inGroup and "=" in line1:
+                            X = parameter(line=line1,group=group)
+                            self.all.append(X)
+
+            else:
+                print("Filetype not handled: "+self.file+'\n')
+                sys.exit()
+
+
+        return
+
+    def __str__(self):
+        '''Output list of parameters'''
+        
+        ll = []
+        for p in self.all: ll.append(p.__str__())
+            
+        return "\n\n".join(ll)
+    
+    def printer(self,mod=False):
+        
+        for p in self.all:
+            if not mod:
+                print p.__str__()
+            elif p.mod:
+                print p.__str__()
+        
+        return
+            
+    def write(self,file):
+        '''Write a file of all lines in parameter set'''
+        
+        try:
+            newfile = open(file,'w')
+
+            for group in self.groups:
+                newfile.write("&"+group+"\n")
+                for p in self.all:
+                    if p.group == group:
+                        newfile.write(p.__str__()+"\n")
+                newfile.write("/\n\n")
+
+            newfile.close()
+            print "Parameter file written: %s" % (file)
+
+        except:
+            print "Error::p.write: %s not written" % (file)
+            sys.exit(2)
+            
+        return
+        
+    def err(self,exit=2,message="unknown"):
+        '''Print an error'''
+        
+        print "Error in %s: %s" % (self.file,message)
+        print ""
+        if exit >= 0: sys.exit(exit)
+        
+        return
+    
+    def get(self,name):
+        '''Return a specific parameter based on the name'''
+        
+        for p in self.all:
+            if p.name == name: 
+                return p
+        
+        self.err(2,message=name+" not found.")
+        return
+    
+    def set(self,name="",value="",group="",param=None):
+        '''Define the value of a given parameter'''
+        
+        # If a parameter is given as argument, take name and value from it
+        if not param is None:
+            name  = param.name
+            value = param.value
+            group = param.group 
+
+        # Loop over all parameters in set and find the correct one,
+        # store new value in its place
+        for p in self.all:
+            if p.name == name: 
+                p.value = value; p.group = group; p.mod = True
+                return p
+        
+        self.err(2,message=name+" not found.")            
+        return
+    
+    def exchange(self,pset=1,file="param_exchange.txt",comment="#",sep=":"):
+        '''Exchange parameter values between modules (converting them as needed)'''
+        
+        # Open the parameter exchange file
+        try:
+            flines = open(file,'r').readlines()
+        except:
+            print "Error: unable to open parameter exchange file: "+file+"\n"
+            sys.exit(2)
+            
+        #Fill in lists for conversion
+        p1 = []; p2 = []; convert = []
+        
+        for line in flines:
+            if len(line.strip()) > 0:
+                if not line.strip()[0] == comment and sep in line:
+                    l0 = line.split("=")
+                    convert.append(l0[1].strip())
+                    l1 = l0[0].split(sep)
+                    p1.append(l1[0].strip())
+                    p2.append(l1[1].strip())
+        
+        # Loop over all exchanges to be made, exchange values!
+        for k in range(len(p1)):
+            #print "%s : %s  %s" % (p1[k],p2[k],convert[k])
+            
+            valnow = pset.get(p1[k]).value
+            
+            if not convert[k] == "1":
+                con = float(convert[k])
+                val = float(valnow)
+                valnow = "%g" % (con*val)
+                #valnow = valnow.replace("+","")
+                
+            pnow = self.set(name=p2[k],value=valnow)
+            
+            print pnow
+        
+        return
+
+def autofolder(params,outfldr0):
+    '''Given a list of parameters,
+       generate an appropriate folder name.
+    '''
+    
+    parts = []
+    
+    for p in params:
+        parts.append( p.short() )
+        
+    # Join the parts together, combine with the base output dir
+    autofldr = '.'.join(parts)
+    outfldr  = outfldr0 + autofldr + '/'
+    
+    return outfldr
+    
+def makedirs(dirname):
+    '''
+    Make a directory (including sub-directories),
+    but first ensuring that path doesn't already exist
+    or some other error prevents the creation.
+    '''   
+    
+    try:
+        os.makedirs(dirname)
+        print     'Directory created: ', dirname
+    except OSError:
+        if os.path.isdir(dirname):
+            print 'Directory already exists: ', dirname
+            pass
+        else:
+            # There was an error on creation, so make sure we know about it
+            raise
+
+    return
+
+def combiner(a):
+    '''a = [[1,2],[3,4,5],[6],[7,8,9,10]]
+    '''
+    r=[[]]
+    for x in a:
+        t = []
+        for y in x:
+            for i in r:
+                t.append(i+[y])
+        r = t
+
+    return(r)
+
+def parse_args(args=[],force=False):
+    '''Loop over provided arguments and separate them into parameter names and values.
+       Default is to assume they are 'rembo' parameters.
+       
+       eg, "melt_choice=1 pdd_factor=1"
+       eg, "rembo="melt_choice=1 pdd_factor=1" sico="dtime_ser=50"
+    '''
+    
+    params = []; group = []
+    
+    # Sort the arguments
+    args.sort()
+    
+    # Loop over the arguments and parse them into separate parameters
+    if 'rembo=' in " ".join(args) or 'sico=' in " ".join(args) \
+      or 'climber=' in " ".join(args) or '&' in " ".join(args):
+
+        for arg in args:        
+            now = "none"
+            if 'rembo='   in arg: now = "rembo"
+            if 'sico='    in arg: now = "sico"   
+            if 'climber=' in arg: now = "climber"
+            if 'grisli='  in arg: now = "grisli"
+            if '&'        in arg: now = "&"
+
+            if not now == "none":
+                tmp = arg.partition("=")
+                now = tmp[0].strip("&")
+                tmp = tmp[2].split()
+                tmp.sort()
+                
+                for p in tmp:
+                    params.append(p)
+                    group.append(now)
+            else:
+                print "\nArguments should be encapsulated by the group name,"
+                print 'eg, rembo="pname1=5" sico="pname2=10"\n'
+                sys.exit(2)
+            
+    else: # only the default module parameters will be loaded
+        for arg in args: 
+            params.append(arg)
+            group.append("none")
+    
+    # Check values of arguments
+    print ""
+    k = 0
+    for p in params:
+        m = group[k]; k = k + 1
+        print m + ":" + p
+    
+    if not force:
+        try:
+            response = raw_input("\n[Enter to proceed] or [ctl-c to exit]")
+            print "\n"
+        except:
+            print "\n"
+            sys.exit()
+    
+    
+    names = []; values = []
+    
+    for p in params:
+        if "=" not in p:
+            print 'Error::parse_args: parameter names and values must be separated by "="'
+            print ''
+            sys.exit(2)
+        
+        # Separate term into name and value(s)
+        tmp = p.split("=")
+        
+        name = tmp[0]
+        vals = [tmp[1]]
+        if "," in tmp[1]: vals = tmp[1].split(",")
+        
+        names.append(name)
+        values.append(vals)
+    
+    # Set up an initial list to store all parameter sets (1 set per run)
+    batch = []   
+    
+    # Make all permutations of parameter options
+    allvalues = combiner(values)
+    
+    # Loop over each set of parameter values
+    for values in allvalues:
+        
+        # Initialize the current new set of parameters
+        set = []
+        
+        for k in range(len(names)):
+            
+            # Generate a new parameter and store in the set
+            X = parameter(name=names[k],value=values[k],group=group[k])
+            set.append(X)
+        
+        # Save the set inside the batch list
+        batch.append(set)
+    
+    ## Check what has been created ##
+##    for b in batch:
+##        print "Batch set ====="
+##        for p in b:
+##            print p
+    
+    return batch    
+    
+
+def jobscript_qsub(executable,outfldr,username,usergroup,wtime):
+    '''Definition of the job script'''
+
+    script = """#!/bin/bash
+#$ -V                             # Ensure user enivronment variables are available
+#####$ -l nodes=1:ppn=1               # Define as a serial job
+#$ -cwd                           # To use the current directory
+#$ -m ae                          # Send mail when job is aborted (a), begins (b) and ends (e)
+####$ -M robinson@fis.ucm.es         # Send mail to this address
+#$ -N rembo_sico                  # (nombre del trabajo)
+#$ -o ./out.out                  # (fichero de salida)   $JOB_ID
+#$ -e ./out.err                  # (fichero de error)
+####$ -l walltime=%s:00:00            # Set wall time (hh:mm:ss)
+
+# Run the job
+#time ./rembo.x output/default
+time ./%s
+
+## output dir: %s 
+"""  % (wtime,executable,outfldr)
+
+    return script
+
+def jobscript_ll(executable,outfldr,username,usergroup,wtime):
+    '''Definition of the job script'''
+
+    script = """#!/bin/ksh
+# @ class = medium
+# @ group = %s
+# @ job_type = serial
+# @ as_limit = unlimited
+# @ data_limit = unlimited
+# @ stack_limit = unlimited
+# @ file_limit = unlimited
+# @ nofile_limit = unlimited
+# @ core_limit = unlimited
+# @ executable = %s
+# @ arguments =  "%s"
+# @ input = /dev/null
+# @ output = %sout.out
+# @ error = %sout.err
+# @ notify_user = %s@pik-potsdam.de
+# @ notification = complete
+# @ Wall_clock_limit = %s:00:00
+# @ checkpoint = no
+# @ queue
+
+ulimit -c unlimited
+ulimit -s unlimited
+ulimit -d unlimited
+ulimit -m unlimited
+ulimit -v unlimited
+ulimit -f unlimited
+ulimit -a
+"""  % (usergroup,executable,outfldr,outfldr,outfldr,username,wtime)
+# Extra options
+# @ resources = ConsumableMemory (2500 mb)
+
+    return script
+    
+def makejob(params,out,wtime,executable,auto=False,force=False,edit=False,submit=False,case="none"):
+    '''Given a set of parameters, generate output folder and
+       set up a job, then submit it.
+    '''
+    
+    nm_jobscript = 'job.submit'    # Name of job submit script  
+    o1     = "grisli_param_list.nml"   # Name of options file
+    o1_out = "anteis_param_list.dat" # Output name of options file
+
+    # Generate a name for the output folder, if desired
+    if auto:
+        outfldr = autofolder(params,out)
+    else:
+        outfldr = out
+        
+    # First generate some empty data sets for each module
+    p_grisli   = parameters()
+
+    # Now load the relevant default parameter files
+    if executable in ("Antar-40"): p_grisli = parameters(file=o1)
+
+    # Store parameter lists as new objects for modification and output
+    p_grisli1  = p_grisli
+
+    # Loop over command line parameters and modify parameter lists
+    for p in params:
+        p_grisli1.set(param=p)
+
+    # Output a separator
+    print "============================================================"
+  
+    # Print info to screen
+    print "\nOutput directory: " + outfldr
+    print "\nModified parameters: GRISLI"
+    p_grisli1.printer(mod=True)
+        
+    response = ""   # Default response is nothing, check if another is given
+    if not force:
+        try:
+            response = raw_input("\n[Enter to submit the job]  or  [s to skip] or [ctl-c to exit] ")
+            print "\n"
+        except:
+            print "\n"
+            sys.exit()
+    
+    # Skip the job if desired
+    if response == "s":
+    
+        print "Job not started, skipping."
+    
+    # Otherwise, get it started!!
+    else:
+          
+        # Make the outfldr directory and observations sub directory automatically
+        makedirs(outfldr)
+
+        # Write the parameter files to the output directory
+        if executable in ("Antar-40"):
+
+            # Make output directory and subdirectory
+            makedirs(outfldr+"Netcdf-Resu")
+
+            # Write new parameter file to output directory
+            p_grisli1.write(outfldr+o1_out)
+
+            # Copy files of interest
+            shutil.copy("bin/"+executable, outfldr)
+
+        if submit:
+            # Make the job run script with the out folder argument
+            
+            username = os.environ.get('USER')  # Get the current username
+            usergroup = "tumble"
+
+            # Create the jobscript using current info
+            if username in ["fispalma25","fispalma22"]:
+                script = jobscript_qsub(executable,outfldr,username,usergroup,wtime)
+            else:
+                script = jobscript_ll(executable,outfldr,username,usergroup,wtime)
+
+            #jobfile1 = open(nm_jobscript,'w').write(script)
+            jobfile2 = open(outfldr + nm_jobscript,'w').write(script)
+            
+            # Copy the job script into output directory for posterity
+            if os.path.isfile (outfldr + nm_jobscript): 
+                print "Created jobscript file(s): " + nm_jobscript
+            
+            # Send the submit command to loadleveler
+            if username in ["fispalma25","fispalma22"]:
+                # Change to output directory, call jobscript and return to main directory
+                root = os.getcwd()
+                os.chdir(outfldr)
+                stat = command("%s %s" %("qsub",nm_jobscript))
+                os.chdir(root)
+            else:
+                stat = command("%s %s" % (llsubmit,nm_jobscript))
+            
+            print stat[0]
+            
+            # Check to see if job has actually been submitted
+            if username in ["fispalma25","fispalma22"]:
+                pass
+            else:
+                proc = command("%s -u %s" % (llq,username))
+                jobsCheck = proc[0]
+            
+                if "currently no job" in jobsCheck:
+                    print "Error in llsubmit: job does not appear in queue!"
+                    sys.exit(2)
+                            
+        else:   # Just run job in background
+            
+            print("*No job submitted.")
+
+            # print "Running job in background: %s" % (executable)
+            # #print "Storing output in: %s" % (outfldr)
+            # try:
+            #     os.system ("./%s %s > %s &" % (executable,outfldr,outfldr+"out.out"))
+            #     #os.system ("%s %s" % (executable,outfldr))
+            # except err:
+            #     print "\n     ",str(err)
+            #     sys.exit(2)
+
+    return outfldr
+    
+def main():
+        
+    # Default values of options #
+    executable = 'Antar-40'      # Exectutable program (default: Antar-40)
+    submit     = False           # Submit the job to loadleveler (default: no)
+    edit       = False           # Interactive editing of options
+    outfldr    = 'output/test/'  # Default output folder is just the outbase
+    auto       = False
+    force      = False
+    wtime      = "24"            # Default wall clock time is 24 hours
+    case       = "none"          # No special simulation case is being run
+
+    # Get a list of options and arguments
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "hlep:o:a:fw:t:", ["help", "program=","edit=","out=","auto=","wall="])
+    except getopt.GetoptError, err:
+        # print help information and exit:
+        usage()
+        print "\n    ",str(err) # will print something like "option -a not recognized"
+        sys.exit(2)
+        
+    # Cycle through options
+    for o, a in opts:
+        if o in ("-h", "--help"):
+            usage()
+            sys.exit()
+        elif o in ("-p", "--program"):
+            executable = a              # Executable program is input argument
+        elif o in ("-l"):
+            submit = True               # Job will be submitted to loadleveler
+        elif o in ("-e", "--edit"):
+            edit   = True               # User will interactively edit options
+        elif o in ("-f"):
+            force   = True              # Jobs will start without user confirmation
+        elif o in ("-o", "--out"):
+            outfldr = a + '/'
+        elif o in ("-a", "--auto"):
+            auto = True                 # No automatic folder generation, use user choice
+            outfldr = a + '/'
+        elif o in ("-w", "--wall"):
+            wtime = a
+        elif o in ("-t"):
+            case = a
+        else:
+            assert False, "unhandled option"
+    
+    # Get the batch parameter sets from the arguments
+    # (returns an empty set if no parameters should be changed)
+    batch = parse_args(args,force=force)
+    
+    # Make sure that if generating multiple runs
+    # that the --auto option has been used
+    if len(batch) > 1 and not auto:
+        print "\nError: automatic folder generation must be used for batch processing!\n"
+        sys.exit(2)
+        
+    # Loop over the parameter sets and make jobs
+    joblist = []
+    for params in batch:
+        
+        # Go through job setup and submit process
+        fldr = makejob(params,outfldr,wtime,executable,auto,force,edit,submit,case)
+    
+        joblist.append(fldr)
+    
+    # Write the job list to a file
+    # (make the output folder relative to the output/ directory)
+    joblist  = "\n".join(joblist)
+    joblist1 = joblist.replace("output/","")
+    joblist1 = joblist1.replace("outtmp/","")
+    
+    try:
+        if os.path.isfile(outfldr+"batch"):
+            open(outfldr+"batch","a").write("\n"+joblist1)
+        else:
+            open(outfldr+"batch","w").write(joblist1)
+        
+        print "Output folder(s):\n"
+        print joblist
+        print "\n"
+        
+    except:
+        print "Unable to write batch list to " + outfldr
+
+    return
+    
+    
+if __name__ == "__main__":
+    main()
+# Done!
