@@ -6,6 +6,12 @@ from itertools import groupby
 from namelist import Namelist
 # from models import climber2, sico, rembo, outletglacier
 
+def _parse_value(v):
+    try:
+        return eval(v)
+    except:
+        return v
+
 class AbstactParameter(object):
     """ Contain infos for one parameter ==> to be subclassed
 
@@ -150,6 +156,7 @@ class AlexParam(AbstactLineWise):
         line  = line[2].partition(sep)
         name  = line[0].strip()
         value = line[2].strip()
+        value = _parse_value(value)
         
         # Also save the initial part of the line for re-writing
         line = string[0:41]
@@ -157,12 +164,12 @@ class AlexParam(AbstactLineWise):
 
     def __str__(self):
         '''Output a string suitable for parameter file'''
-
+        # no string markers "" needed here
         if self.line:
             return "{} {}".format(self.line,self.value)
         else:
             line = "{name} - {desc} ({units})".format(**self.__dict__)
-            return "{line:39} = {value}".format(line, **self.__dict__)
+            return "{line:39} = {value}".format(line=line, value=self.value)
 
     @classmethod
     def loads(cls, string):
@@ -201,11 +208,14 @@ class Climber2Param(AbstactLineWise):
         line  = string.partition("|")
         line  = line[2].strip()
 
+        value = _parse_value(value)
+
         return cls(name=name, line=line, value=value)
 
     def __str__(self):
+        # string marker needed, therefore repr()
         line = self.line or "{name} : {desc} ({units})".format(**self.__dict__)
-        return " {:<9}| {}".format(self.value,line)
+        return " {:<9}| {}".format(repr(self.value),line)
 
     @classmethod
     def loads(cls, string):
@@ -421,12 +431,22 @@ if __name__ == "__main__":
     print ""
     print OutletGlacierParam.dumps(params3)
 
+    print " "
     print "Test access parameter"
-    print "beta:", params3.get('beta', group='dynamics')
+    print "Rembo:"
+    print "domain=", repr(params1.get('domain'))
+    print ""
+    print "CLIMBER2:"
+    print "NYRMX=", repr(params2.get('NYRMX'))
+    print ""
+    print "OutletGlacier:"
+    print "beta=", repr(params3.get('beta'))
+    print "&smb mode=", repr(params3.get('mode', group='smb'))
+    print "&submelt mode=", repr(params3.get('mode', group='submelt'))
 
     print " "
     print "Test modify parameter"
-    print "set to 40000"
+    print "set beta to 40000"
     print " "
     params3.set('beta', 40000, group='dynamics')
     params4 = params3.filter(group='dynamics')
