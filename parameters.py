@@ -274,7 +274,12 @@ class OutletGlacierParam(NamelistParam):
 class Parameters(list):
     """ The data structure of a parameter list. 
 
-    It contains various method to explore the data.
+    It is design to contain many types of parameters, even though in practice
+    we will have to do mostly with homogeneous parameter types (e.g. distinct 
+    parameter sets for Climber2, Sico and so on). If so, the class could be 
+    thinned down a bit. Anyway, a flat list of parameter, whatever the grouping, 
+    seems a good idea. It is always easy, later to use groupby or the like.
+
     It reilies on the "key" attribute of the contained Param class,
     which identifies one parameter uniquely, on which __eq__ is based,
     and therefore the list.index() function can be called on a parameter
@@ -295,6 +300,10 @@ class Parameters(list):
                     return False
             return True
         return self.__class__(p for p in self if test(p))
+
+    def filter_by_cls(self, paramcls):
+        " return a list of parameters with instance from a same class "
+        return self.__class__(p for p in self if isinstance(p, paramcls))
 
     def item(self, **kwargs):
         """ same as filter, but return a single parameter (or raise error)
@@ -384,13 +393,6 @@ class Parameters(list):
         " get value of one parameter, identified by its name and other attributes"
         return self.item(name=name, **kwargs).value
 
-    #
-    # I / O
-    #
-    def filter_by_cls(self, paramcls):
-        " return a list of parameters with instance from a same class "
-        return Parameters(p for p in self if isinstance(p, paramcls))
-
     def __repr__(self):
         " display on screen "
         lines = ["Parameters("] + ["\t"+repr(p) for p in self] + [")"]
@@ -418,3 +420,14 @@ if __name__ == "__main__":
     print Climber2Param.dumps(params2)
     print ""
     print OutletGlacierParam.dumps(params3)
+
+    print "Test access parameter"
+    print "beta:", params3.get('beta', group='dynamics')
+
+    print " "
+    print "Test modify parameter"
+    print "set to 40000"
+    print " "
+    params3.set('beta', 40000, group='dynamics')
+    params4 = params3.filter(group='dynamics')
+    print OutletGlacierParam.dumps(params4)
