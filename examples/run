@@ -1,0 +1,69 @@
+============ Time definitions ==============================================
+0         | KTIME  | real time          | NO         | YES
+1         | KCAL   | astr./calend time  | ASTRONOMIC | CALENDAR   
+1700   	  | NYRSR  | strat time (yrBP "-"). For KTIME=0 permanent year
+============ Run-time ======================================================
+10         | NYRMX  | run-time (yrs)
+============ Start/restart flag ice-sheet module ===========================   
+1         | KLSR   | start/restart flag | NEW RUN    | RESTART | REST SIMENV
+1         | KLWR   | write for restart  | NO         | YES
+"INP/restart.dat"  | RESTART_IN   | input restart file
+============ Model configuration ===========================================   
+2         | KOCN   | ocean module       | OFF        | SLAB        | MUZON
+0         | KOCNW  | write ocean_mod.dat| NO         | YES    (when KOCN=2)
+0         | KES    | efficient sampling | OFF | ON | SPINUP+constraints+CO2x2
+0         | KTVM   | vegetation model   | OFF | STATIC  | DYNAMIC  | DYN+CC 
+0         | KOCAR  | ocean  C-cycle     | OFF        | ON
+1         | KSLR   | SLR module         | OFF        | ON          | OLD 
+0	  | KCFC   | CFC tracer         | OFF	     | EMPIRICAL | CL FIELDS
+============ Experimental settings =========================================   
+0         | KCCC   | closed C-cycle     | NO         | YES
+1         | KCCR   | PAR=PA             | NO         | YES
+0         | KDFLX  | anomalous FWF      | NO         | YES     (1 ... N)
+0         | KSOLC  | var solar constant | NO         | YES
+0         | KCO2   | var CO2 concentrat | NO         | YES
+0         | KCO2D  | CO2 input          | NO | p(CO2) | EMISSION | CUMCO2 charbit | CUMCO2 RCP
+0         | KSED   | ocean  sediments   | NO         | YES
+0         | KWEATH | weathering forcing | NO         | YES        |
+0         | KCORAL | coral reef forcing | NO         | YES        |
+0         | KIRON  | iron fert. forcing | NO         | YES        |
+0         | KLAND  | land carbon inter. | NO         | YES        |
+0         | KYEDOM | yedoma interactive | NO         | YES        |
+============ Output definitions ============================================
+1         | KOUT   | output type        | FINAL      | REGULAR
+5         | NFOUT  | regular output frequency in yrs (only for KOUT=1)
+1         | NAOUT  | averagin period in yrs
+============ CO2 ===========================================================   
+280       | PA     | CO2 concentration (carbon cycle)
+280       | PAR    | CO2 concentration (radiative code)
+280.      | PAB    | CO2 concentration (radiative code)  
+ 1000     | CUMCO2 | cumulative CO2 emission (KCO2D=3: Charbit, KCO2D=4: RCP) 
+=========== Additional Radiative Forcing (past and present climate) ========
+0         | KRFA  | RF fields          | OFF       |   Global   | 2D patterns
+============ Feedback analysis =============================================
+0         | KFB    | switch for FBA     | OFF        | ON  
+0         | KW_FBA | write feedback.dat | OFF        | ON  
+===========================================================================
+0         | KZLEV  | switch for Z-level | variable   | fixed  
+0         | KW_ZLEV| write zlevel.dat   | OFF        | ON  
+===========================================================================
+0         | KRH    | switch for RH profile  | variable  | prescribed 
+0         | KW_RH  | write  RH3D.dat        | OFF        | ON  
+1         | K2RH   | switch for RH profile  | CLIMBER   | exponential
+1         | KWV   | switch for water vapour  | standard  | new
+===========================================================================
+1         | KCOD   | switch for COD     | standard      | new 
+============ Additional flags for outputs ==============
+1         | KOUT_HIST  |  NO   |  YES   
+0         | KOUT_AFX   |  NO   |  YES  
+0         | KOUT_A2G   |  NO   |  YES  
+0         | KOUT_A2ZT  |  NO   |  YES   
+0         | KOUT_A2ZX  |  NO   |  YES    
+0         | KOUT_A3D   |  NO   |  YES    
+0         | KOUT_OCNF  |  NO   |  YES   
+0         | KOUT_OCNS  |  NO   |  YES     
+0         | KOUT_OCNT  |  NO   |  YES   
+0         | KOUT_OCNX  |  NO   |  YES   
+0         | KOUT_Q3D   |  NO   |  YES   
+0         | KOUT_SLR2D |  NO   |  YES   
+0         | KOUT_CPL   |  NO   |  YES   

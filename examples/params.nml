@@ -1,0 +1,72 @@
+!
+! Default glacier parameters, to be updated for each individual glacier in the 
+! input directory, in update.nml
+!
+
+&geometry
+    L = 60000.,  ! domain length (m): set to -1 to adapt to input data
+    dx0 = 100.,  ! desired grid spacing 
+
+    width_mode = "from_file",  ! "from_file", "polynomial"
+    w = 50000. 0. 0.,       ! polynomial coef to describe glacier width
+
+    bedrock_mode = "from_file",  ! "from_file", "polynomial"
+    z = 250. -0.008 0. 0., ! polynomial coef for bedrock topography
+    slr = 0.                   ! (m) sea level rise above reference level: bedrock topo
+/
+
+&dynamics  
+
+! Ice, ocean water, and fresh water densities and gravitational acceleration
+    rho_i  = 917  ! ice density (kg m^-3)
+    rho_sw = 1028 ! ocean water density (kg m^-3)
+    rho_fw = 1000 ! fresh water density (kg m^-3)
+    g      = 9.81 ! acceleration (m s^-2)
+    
+! Stress parameters
+    m = 3	    ! basal sliding exponent
+    beta = 2e+04    ! basal roughness factor ((m/s)^(-1/m)) 
+    n = 3	    ! flow law exponent
+    A_min = 3.5e-25 ! minimum rate factor value (Pa^-n s^-1)
+    A_max = 9.3e-25 ! maximum rate factor value (Pa^-n s^-1)
+    E = 1.0	    ! enhancement factor (accounts for fabric development)
+
+!
+   H_max = 5000.     ! stop if glacier thicker than that
+/
+
+&atmos
+    mode = "off"    ! to be implemented: REMBO
+/
+
+&ocean
+    mode = "off"             ! "off", "polynomial". If submelt is set to "measured", the module can stay off.
+    z = /1., -0.008, 0./     ! to describe ocean temperature in polynomial mode, based on elevation (positive upward)
+/
+
+&smb
+    mode = "ELA"	     ! "ELA",or "prescribed" to use smb data, to be implemented: "atmos"
+    ELA = 800		     ! equilibrium line altitude (m)
+    lapserate  =  -0.0071    ! air temperature lapse rate (0.71^{o}C/100m) (deg/m)
+    smb_offset = 0           ! SMB offset, valid in prescribed mode only (m / year)
+
+    ! slope in the accumulation (c1) & ablation (c2) zones
+    c1     = 0.95	     ! m/yr/K 
+    c2     = 0.3	     ! m/yr/K 
+/
+
+&submelt   ! submarine melting
+    mode	    = "measured"   ! "measured", "ocean-temperature"
+    scal   	    = 1      ! experimental, to scale submarine melting
+    cal_melt        = 0     ! (m / yr)
+    cmelt   	    = 0.     ! (m / yr / K)
+    Teq             = 0.     ! (K) 
+    L_iceberg       = 100.   ! (m)
+/
+
+&calving  
+    mode          = "CDw"   
+    fwd           = 4     ! (m) fresh water depth in crevasses
+    H_min         = 20	  ! (m) minimum thickness for calving if crevasses never reach the sea level height 
+/
+

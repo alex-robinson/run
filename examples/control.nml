@@ -1,0 +1,25 @@
+&general
+  name = 'petermann'
+  in_dir = 'input'
+  out_dir = 'out/'
+  rst_dir = 'out'
+  debug = .false.
+/
+
+&time
+  year0 = 1400
+  yearf = 1499
+  dt = 3.65
+/
+
+&output
+  out_mode = 'append'
+  out_freq = 'yearly'
+  out_mult = 1
+/
+
+&restart
+  from_rst = .true.
+  rst_freq = 'yearly'
+  rst_mult = 100
+/

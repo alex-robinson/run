@@ -13,7 +13,7 @@ from collections import OrderedDict
 import re
 
 def read_namelist_file(filename):
-    return Namelist(open(filename, 'r').read())
+    return Namelist.parse_file(open(filename, 'r').read())
 
 class AttributeMapper():
     """
@@ -80,21 +80,23 @@ def _parse_value(variable_value):
 
     return parsed_value
 
-
-class Namelist():
+class Namelist(object):
     """
     Parses namelist files in Fortran 90 format, recognised groups are
     available through 'groups' attribute.
     """
+    def __init__(self, groups):
+        self.groups = groups
 
-    def __init__(self, input_str):
-        self.groups = OrderedDict()
+    @classmethod
+    def parse_file(cls, input_str):
+        groups = OrderedDict()
 
         group_re = re.compile(r'&([^&]+)/', re.DOTALL)  # allow blocks to span multiple lines
         array_re = re.compile(r'(\w+)\((\d+)\)')
         # string_re = re.compile(r"\'\s*\w[^']*\'")
         string_re = re.compile(r"[\'\"]*[\'\"]")
-        self._complex_re = re.compile(r'^\((\d+.?\d*),(\d+.?\d*)\)$')
+        # self._complex_re = re.compile(r'^\((\d+.?\d*),(\d+.?\d*)\)$')
 
         # remove all comments, since they may have forward-slashes
         # TODO: store position of comments so that they can be re-inserted when
@@ -134,7 +136,11 @@ class Namelist():
                 parsed_value = _parse_value(variable_value)
                 group[variable_name] = parsed_value
 
-            self.groups[group_name] = group
+        
+            groups[group_name] = group
+
+        # Return namelist class
+        return cls(groups)
 
     def dump(self, array_inline=True):
         lines = []

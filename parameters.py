@@ -1,14 +1,16 @@
 """ Main parameter class
 """
+# from __future__ import absolute_import
 from collections import OrderedDict as odict
 from itertools import groupby
+from namelist import Namelist
 # from models import climber2, sico, rembo, outletglacier
 
 class AbstactParameter(object):
     """ Contain infos for one parameter ==> to be subclassed
 
     Useful methods:
-    - parse_line
+    - read
     - convert 
     - __str__ 
     """
@@ -52,7 +54,7 @@ class AbstactParameter(object):
         
     def __repr__(self):
         " informative representation, in prompt"
-        return "{cls}({group},{name},{value})".format(cls=self.__class__, **self.__dict__)
+        return "{cls}({group},{name},{value})".format(cls=self.__class__.__name__, **self.__dict__)
 
     # def __str__(self):
     #     '''Output a string suitable for parameter file'''
@@ -75,17 +77,24 @@ class AbstactParameter(object):
         " to convert into a set or dictionary"
         return hash(self.key)
 
-
+    #
+    # The two following read / write method actually handle the I/O of 
+    # a list of parameters, not a single parameter (which does not make sense)
+    # even though the class stores information for a single parameter.
+    # This are not proper methods, but it is convenient to have them tied to the 
+    # class.
+    #
     @classmethod
     def read(cls, filename):
         """ read a list parameters and returns a Parameters class
         """
         raise NotImplementedError("need to be subclassed")
 
-    @classmethod
-    def parse_line(cls, string):
+    @staticmethod
+    def write(filename, params):
+        """ Write a list of parameters of the same group to file
+        """
         raise NotImplementedError("need to be subclassed")
-
 
 #
 # model-specific parameters
@@ -95,6 +104,8 @@ class AlexParam(AbstactParameter):
 
     @classmethod
     def parse_line(cls, string):
+        """ Parse one line and return a parameter instance
+        """
         line  = string.partition(":")
         units = line[0].strip()
         sep = "="
@@ -105,8 +116,7 @@ class AlexParam(AbstactParameter):
         
         # Also save the initial part of the line for re-writing
         line = string[0:41]
-
-        return {'name':mame, 'value':value, 'units':units, 'line':line, 'desc':""}
+        return cls(name=name, value=value, units=units, line=line)
 
     def __str__(self):
         '''Output a string suitable for parameter file'''
@@ -119,26 +129,25 @@ class AlexParam(AbstactParameter):
 
     @classmethod
     def read(cls, filename):
+        """ Read a file of parameters and returns a Parameters instance
+        """
         # Load all parameters from the input file
         try:
             lines = open(filename,'r').readlines()
         except:
             print "File could not be opened: "+filename+'\n'
             raise
-   
-        # Loop to find parameters and load them into class
-        if self.file in ("options_rembo","options_sico"):
-            
-            # Loop through lines and determine which parts correspond to
-            # parameters, store these parts in self.all
-            for line in self.lines:    
-                first = ""
-                if len(line) > 41: first = line.strip()[0]
-                if not first == "" and not first == comment and line[40] in ("=",":"):
-                    X = parameter(string=line)
-                    self.all.append(X)
 
-        return Parameters(cls._read_file(filename))
+        # Loop to find parameters and load them into class
+        comment = "#"
+        params = Parameters()
+        for line in lines:
+            first = ""
+            if len(line) > 41: first = line.strip()[0]
+            if not first == "" and not first == comment and line[40] in ("=",":"):
+                p = cls.parse_line(line)
+                params.append(p)
+        return params
 
 class SicoParam(AlexParam):
     module = "sico"
@@ -146,7 +155,7 @@ class SicoParam(AlexParam):
 class RemboParam(AlexParam):
     module = "rembo"
 
-class Climber2(AbstactParameter):
+class Climber2Param(AbstactParameter):
     " read CLIMBER2-type parameters"
     module = "climber2"
 
@@ -162,22 +171,67 @@ class Climber2(AbstactParameter):
         line  = string.partition("|")
         line  = line[2].strip()
 
-        return {'name':mame, 'line':line, 'value':value, 'units':units}
+        return cls(name=name, line=line, value=value)
 
     def __str__(self):
         line = self.line or "{name} : {desc} ({units})".format(**self.__dict__)
         return " {:<9}| {}".format(self.value,line)
 
-        else:  # climber option file 'run'
-            
-            # Loop through lines and determine which parts correspond to
-            # parameters, store these parts in self.all
-            for line in self.lines:     
-                first = line.strip()[0]
-                if not first == "" and not first == "=":
-                    X = parameter(string=line,module="climber")
-                    self.all.append(X)
+    @classmethod
+    def read(cls, filename):
+        """ Read CLIMBER-2 parameter config and returns a Parameters instance
+        """ 
+        try:
+            lines = open(filename,'r').readlines()
+        except:
+            print "File could not be opened: "+filename+'\n'
+            raise
+        params = Parameters()
+        for line in lines:
+            first = line.strip()[0]
+            if not first == "" and not first == "=":
+                p = cls.parse_line(line.strip())
+                params.append(p)
+        return params
 
+    @classmethod
+    def write(cls, filename, params):
+        lines = [str(p) for p in params]
+        with open(filename, 'w') as f:
+            f.write("\n".join(lines))
+
+class NamelistParam(AbstactParameter):
+
+    @classmethod
+    def read(cls, filename):
+        with open(filename, 'r') as f:
+            input_str = f.read()
+        nml = Namelist.parse_file(input_str)
+
+        # flatten namelist to store it in the Parameters class
+        params = Parameters()
+        for g in nml.groups:
+            for nm in nml.groups[g]:
+                p = cls(name=nm, value=nml.groups[g][nm], group=g)
+                params.append(p)
+        return params
+
+    @classmethod
+    def write(cls, filename, params):
+        # convert back to Namelist class (with groups and so)
+        nml = cls.to_nml(params)
+        print "Write namelist to", filename
+        with open(filename, 'w') as f:
+            f.write(nml)
+
+    @classmethod
+    def to_nml(cls, params):
+        " convert a list of Parameters to Namelist class "
+        groups = params.groupby('group', 'name') # 2nd degree ordered dict of Params
+        return Namelist(groups)
+
+class OutletGlacierParam(NamelistParam):
+    module = "outletglacier"
 
 #
 # Which container type for the parameters?
@@ -198,7 +252,7 @@ class Climber2(AbstactParameter):
 #
 # A list seems a reasonable tradeoff, with additional checks on insertion
 
-class AbstractParameters(list):
+class Parameters(list):
     """ The data structure of a parameter list. 
 
     It contains various method to explore the data.
@@ -265,32 +319,41 @@ class AbstractParameters(list):
         return odict([(getattr(p, key),p) for p in self])
 
     def has_duplicates(self):
-        " return True if all element have distinct keys"
+        " return True if all elements have distinct keys"
         return len(set(self)) != len(self) # set uses __hash__ to remove duplicates
 
-    # function below sort the parameters ...
-    def drop_duplicates(self, keep=-1, item=None, key='key'):
-        " drop duplicates, using keep as an index (e.g. 0 or -1)"
-         item = item or lambda params : params[keep] # function must return one item from a list
-         return self.__class__(item(list(g)) for k, g groupby(sorted(self, key), key))
+    def drop_duplicates(self, keep=-1, item=None):
+        """ drop duplicates, by default keep the last inserted parameter
+        """
+        item = item or (lambda params : params[keep]) # function must return one item from a list
+        groups = self.groupby('key')
+        for k in groups:
+            groups[k] = item(groups[k])
+        return self.__class__(groups.values()) # only keep the values
 
-    # def groupby(self, key='module'):
-    #     """ useful to group by module, or/and by group
-    #     check that self.has_duplicates() is False beforehand
-    #
-    #     Returns and an imbricated structure of Ordered dictionaries
-    #     """
-    #     res = odict() 
-    #     for k in (key,) + keys:
-    #         params = params.filter(k)
-    #
-    #     return groupby(self, lambda p:getattr(p, key))
+    def groupby(self, key, *keys):
+        """ return nested ordered dict of Parameters
 
-class Parameters(AbstractParameters):
-    """ This class contains more specific utilities to file I/O and so on.
+        >>> params.groupby('module')
+        OrderedDict([('climber2', Params(...)), ('rembo',Params(...)), ...])
 
-    Split from AbstractParameters for no good reason except maybe elegance...
-    """
+        Adding more keys increases the depth of the grouping
+        """
+        # group all by the first key
+        groups = odict()
+        for val, g in groupby(self, key): # iterator
+            if val not in groups:
+                groups[val] = self.__class__(g)
+            else:
+                groups[val].extends(list(g))
+
+        # descend further? recursive call to groupby
+        if len(keys) > 0:
+            for val in groups:
+                groups[val] = groups[val].groupby(keys[0], **keys[1:])
+
+        return groups
+
     #
     # setter/getter: convenience function, wrapper around item()
     #
@@ -301,3 +364,32 @@ class Parameters(AbstractParameters):
     def get(self, name, **kwargs):
         " get value of one parameter, identified by its name and other attributes"
         return self.item(name=name, **kwargs).value
+
+    #
+    # I / O
+    #
+    @staticmethod
+    def read(filename, paramcls):
+        return paramcls.read(filename)
+
+    def write(self, filename, paramcls):
+        params = [p for p in self if isinstance(p, paramcls)]
+        paramcls.write(filename, params)
+
+    def __repr__(self):
+        " display on screen "
+        lines = ["Parameters("] + ["\t"+repr(p) for p in self] + [")"]
+        return "\n".join(lines)
+
+if __name__ == "__main__":
+    print "Test read namelist"
+    params1 = RemboParam.read("examples/options_rembo")
+    params2 = Climber2Param.read("examples/run")
+    params3 = OutletGlacierParam.read("examples/params.nml")
+
+    print ""
+    print params1
+    print ""
+    print params2
+    print ""
+    print params3
