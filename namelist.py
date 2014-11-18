@@ -167,7 +167,7 @@ class Namelist(object):
         elif isinstance(value, float):
             # return "{:.3e}".format(value) # use exp. notation after 3 digits
             return "{}".format(value) # use exp. notation after 3 digits
-        elif isinstance(value, str):
+        elif isinstance(value, basestring):
             return "'%s'" % value
         elif isinstance(value, complex):
             return "(%s,%s)" % (self._format_value(value.real), self._format_value(value.imag))
