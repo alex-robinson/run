@@ -13,13 +13,7 @@ def _parse_value(v):
         return v
 
 class Parameter(object):
-    """ Contain infos for one parameter ==> to be subclassed
-
-    Useful methods:
-    - loads, dumps
-    - read, write
-    - convert 
-    - __str__ 
+    """ Contain infos for one parameter
     """
     def __init__(self,name="",value="",units="", desc="", line="", group=""):
         self.name = name
@@ -65,7 +59,7 @@ class Parameter(object):
         return self.key == other.key
 
     def __hash__(self):
-        " to convert into a set or dictionary"
+        " to convert into a set (or be used as dictionary key)"
         return hash(self.key)
 
 
@@ -165,7 +159,7 @@ class AbstractParameters(list):
 
     def drop_duplicates(self):
         " "
-        return list(self.to_dict())
+        return list(self.to_dict().iteritems())
 
     #
     # setter/getter: convenience function, wrapper around item()
