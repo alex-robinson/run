@@ -21,8 +21,6 @@ class Parameter(object):
     - convert 
     - __str__ 
     """
-    module = None
-
     def __init__(self,name="",value="",units="", desc="", line="", group=""):
         self.name = name
         self.value = value
@@ -61,7 +59,7 @@ class Parameter(object):
     @property
     def key(self):
         " unique ID "
-        return (self.module, self.group, self.name)
+        return (self.group, self.name)
 
     def __eq__(self, other):
         return self.key == other.key
@@ -75,7 +73,7 @@ class Parameter(object):
 # Which container type for the parameters?
 # - requirements/preferences: 
 #   - keep order of the parameter in each group
-#   - allows but does not require a specific tree structure (e.g. module=>group=>name)
+#   - allows but does not require a specific tree structure (e.g. group=>name)
 #   - does not duplicate the key info and the content of a parameter (e.g. pb with dict)
 #   - does not let two "same" parameters coexist (e.g. cool with dict, pb with list)
 #   - easily access individual elements
@@ -110,8 +108,8 @@ class AbstractParameters(list):
     """
     def filter(self, **kwargs):
         """ filter parameters by any parameter attribute, returns a sub-list 
-        >>> params.filter(group="basal", module="outletglacier")
-        [Parameter("basal","beta",2e4),Parameter("basal","mode","constant")]
+        >>> params.filter(group="basal")
+        [P("basal","beta",2e4),P("basal","mode","constant")]
         """
         def test(p):
             for k in kwargs:
@@ -120,14 +118,10 @@ class AbstractParameters(list):
             return True
         return self.__class__(p for p in self if test(p))
 
-    # def filter_by_cls(self, paramcls):
-    #     " return a list of parameters with instance from a same class "
-    #     return self.__class__(p for p in self if isinstance(p, paramcls))
-    #
     def item(self, **kwargs):
         """ same as filter, but return a single parameter (or raise error)
-        >>> params.get(name="beta", group="basal", module="outletglacier")
-        Parameter("basal","beta",2e4)
+        >>> params.get(name="beta", group="basal")
+        P("basal","beta",2e4)
         """
         r = self.filter(**kwargs)
         assert len(r) == 1, "{} match(es) for {}".format(len(r), kwargs)
@@ -169,37 +163,9 @@ class AbstractParameters(list):
         " return True if all elements have distinct keys"
         return len(set(self)) != len(self) # set uses __hash__ to remove duplicates
 
-    def drop_duplicates(self, keep=-1, item=None):
-        """ drop duplicates, by default keep the last inserted parameter
-        """
-        item = item or (lambda params : params[keep]) # function must return one item from a list
-        groups = self.groupby('key')
-        for k in groups:
-            groups[k] = item(groups[k])
-        return self.__class__(groups.values()) # only keep the values
-
-    def groupby(self, key, *keys):
-        """ return nested ordered dict of Parameters
-
-        >>> params.groupby('module')
-        OrderedDict([('climber2', Params(...)), ('rembo',Params(...)), ...])
-
-        Adding more keys increases the depth of the grouping
-        """
-        # group all by the first key
-        groups = odict()
-        for val, g in groupby(self, lambda x:getattr(x,key)): # iterator
-            if val not in groups:
-                groups[val] = self.__class__(g)
-            else:
-                groups[val].extends(list(g))
-
-        # descend further? recursive call to groupby
-        if len(keys) > 0:
-            for val in groups:
-                groups[val] = groups[val].groupby(keys[0], *keys[1:])
-
-        return groups
+    def drop_duplicates(self):
+        " "
+        return list(self.to_dict())
 
     #
     # setter/getter: convenience function, wrapper around item()
@@ -216,13 +182,6 @@ class AbstractParameters(list):
         " display on screen "
         return self.__class__.__name__+"([\n"+ ",\n".join([4*" "+repr(p) for p in self] + ["])"])
 
-    #
-    # The two following read / write method actually handle the I/O of 
-    # a list of parameters, not a single parameter (which does not make sense)
-    # even though the class stores information for a single parameter.
-    # This are not proper methods, but it is convenient to have them tied to the 
-    # class.
-    #
     @classmethod
     def read(cls, filename, verbose=True):
         """ read a list parameters and returns a Parameters class
