@@ -3,6 +3,7 @@
 # from __future__ import absolute_import
 from collections import OrderedDict as odict
 import warnings
+import copy
 from itertools import groupby
 from namelist import Namelist
 # from models import climber2, sico, rembo, outletglacier
@@ -83,7 +84,7 @@ class Parameter(object):
 #
 # A list seems a reasonable tradeoff, with additional checks on insertion
 
-class AbstractParameters(list):
+class Parameters(list):
     """ The data structure of a parameter list. 
 
     It is design to contain many types of parameters, even though in practice
@@ -140,11 +141,10 @@ class AbstractParameters(list):
                 self.append(p)
 
     def copy(self):
-        " copy the container, not the contained object (`p.value` 3 will affect both lists)"
-        return [p for p in self]
+        return [copy.copy(p) for p in self]
 
     def keys(self, key='key'):
-        """ check the keys present in the parameter 
+        """ check all available values for a particular attribute
         >>> params.keys('group')
         ['submelt', 'dynamic', 'calving']
         """
@@ -168,6 +168,14 @@ class AbstractParameters(list):
     def set(self, name, value, **kwargs):
         " set value of one parameter, identified by its name and other attributes"
         self.item(name=name, **kwargs).value = value
+
+    def set_group(self, newgroup, **kwargs):
+        """ set 'group' attribute for all or a subset of parameters
+        >>> params.set_group('somegroup')
+        >>> params.set_group('somegroup', group="oldgroup")
+        """
+        for p in self.filter(**kwargs):
+            p.group = newgroup
 
     def get(self, name, **kwargs):
         " get value of one parameter, identified by its name and other attributes"
