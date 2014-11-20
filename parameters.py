@@ -5,6 +5,7 @@ from collections import OrderedDict as odict
 import warnings
 import copy
 from itertools import groupby
+from functools import wraps
 from namelist import Namelist
 # from models import climber2, sico, rembo, outletglacier
 
@@ -13,6 +14,125 @@ def _parse_value(v):
         return eval(v)
     except:
         return v
+
+#
+# Namelist
+# 
+def _to_str_nml(params):
+    """ Write with namelist format
+    """
+    # convert to Namelist class
+    groups = odict()
+    for k, g in groupby(params, lambda x: x.group):
+        if k == "":
+            print list(g)
+            raise ValueError("Group not defined. Cannot write to namelist. See Parameters' set_group() method.")
+        groups[k] = odict([(p.name, p.value) for p in g])
+    nml = Namelist(groups)
+    string = nml.dump()
+    return string
+
+def _parse_file_nml(cls, string):
+    nml = Namelist.parse_file(string)
+
+    # flatten namelist to store it in the Parameters class
+    params = cls()
+    for g in nml.groups:
+        for nm in nml.groups[g]:
+            p = Parameter(name=nm, value=nml.groups[g][nm], group=g)
+            params.append(p)
+    return params
+
+#
+# Generic functions for Line-by-line format
+#
+def _to_str_linebyline_generic(params, param_to_line):
+    string = "\n".join(param_to_line(p) for p in params)
+    return string
+
+def _parse_file_linebyline_generic(cls, string, line_parser, comment="#"):
+    lines = string.split("\n")
+    params = cls()
+    for line in lines:
+        line = line.strip()
+        # is startswith("=") needed ?
+        if line == "" or line.startswith(comment):
+            continue
+        try:
+            p = line_parser(line.strip())
+        except Exception as error:
+            "Problem parsing line: "+line
+            raise
+        params.append(p)
+    return params
+
+#
+# Alex format
+# 
+def _parse_line_alex(string):
+    """ Parse one line and return a parameter instance for Alex format
+    """
+    # NOTE: could be transformed as a class method
+    # to pass the Parameter instance some model-specific
+    # information, e.g. "module" or even the container class
+    # it belongs to (cls). Not needed for now.
+    line  = string.partition(":")
+    units = line[0].strip()
+    sep = "="
+    if ":" in line[2]: sep = ":"
+    line  = line[2].partition(sep)
+    name  = line[0].strip()
+    value = line[2].strip()
+    value = _parse_value(value)
+    
+    # Also save the initial part of the line for re-writing
+    line = string[0:41]
+    return Parameter(name=name, value=value, units=units, line=line) 
+
+def _parse_file_alex(cls, string):
+    return _parse_file_linebyline_generic(cls, string, _parse_line_alex)
+
+def _param_to_line_alex(param):
+    if param.line:
+        l = "{} {}".format(param.line,param.value)
+    else:
+        line = "{name} - {desc} ({units})".format(**param.__dict__)
+        l = "{line:39} = {value}".format(line=line, value=param.value)
+    return l
+
+def _to_str_alex(params):
+    return _to_str_linebyline_generic(params, _param_to_line_alex)
+
+
+#
+# Climber2 format
+# 
+def _parse_line_climber2(string):
+    line  = string.partition("|")
+    units = ""
+    value = line[0].strip()
+    line  = line[2].partition("|")
+    name  = line[0].strip()
+    
+    line  = string.partition("|")
+    line  = line[2].strip()
+    value = _parse_value(value)
+
+    return Parameter(name=name, line=line, value=value)
+
+def _parse_file_climber2(cls, string):
+    return _parse_file_linebyline_generic(cls, string, _parse_line_climber2, comment='=')
+
+def _param_to_line_climber2(param):
+    line = param.line or "{name} : {desc} ({units})".format(**param.__dict__)
+    return " {:<9}| {}".format(repr(param.value),line)
+
+def _to_str_climber2(params):
+    return _to_str_linebyline_generic(params, _param_to_line_climber2)
+
+#
+# Parameter class
+#
 
 class Parameter(object):
     """ Contain infos for one parameter
@@ -64,25 +184,6 @@ class Parameter(object):
         " to convert into a set (or be used as dictionary key)"
         return hash(self.key)
 
-
-#
-# Which container type for the parameters?
-# - requirements/preferences: 
-#   - keep order of the parameter in each group
-#   - allows but does not require a specific tree structure (e.g. group=>name)
-#   - does not duplicate the key info and the content of a parameter (e.g. pb with dict)
-#   - does not let two "same" parameters coexist (e.g. cool with dict, pb with list)
-#   - easily access individual elements
-#   - performance not essential
-#
-# - OrderedDict : redundancy with key (would need to introduce special checks during insertion)
-# - set : cool, but looses order
-# - list : many cool functions to organize data, but risk of duplicating params
-# 
-# Ideally, an ordered set would be just what we need, but does not exist as built-in
-# See e.g. https://github.com/LuminosoInsight/ordered-set/blob/master/ordered_set.py
-#
-# A list seems a reasonable tradeoff, with additional checks on insertion
 
 class Parameters(list):
     """ The data structure of a parameter list. 
@@ -185,175 +286,60 @@ class Parameters(list):
         " display on screen "
         return self.__class__.__name__+"([\n"+ ",\n".join([4*" "+repr(p) for p in self] + ["])"])
 
-    @classmethod
-    def read(cls, filename, verbose=True):
-        """ read a list parameters and returns a Parameters class
-        """
-        if verbose:
-            print "Read {} params from {}".format(cls.__name__,filename)
-        with open(filename) as f:
-            string = f.read()
-        return cls.loads(string)
-
-    def write(self, filename, verbose=True):
-        """ Write a list of parameters of the same group to file
-        """
-        string = self.dumps()
-        if verbose:
-            print "Write {} params to {}".format(self.__class__.__name__, filename)
+    #
+    # I / O
+    #
+    @staticmethod
+    def _write_from_str(filename, file_str, verbose):
+        " write a string to file "
+        if not filename:
+            # as an example, can indicate None or "" for filename 
+            # ==> will simply output the string
+            return file_str
+        if verbose: print "Write params to {}".format(filename)
         with open(filename, "w") as f:
-            f.write(string)
+            f.write(file_str)
+
+    @staticmethod
+    def _read_to_str(filename, verbose):
+        " read a file to string "
+        if verbose: print "Read params from {}".format(filename)
+        with open(filename) as f:
+            file_str = f.read()
+        return file_str
 
     @classmethod
-    def loads(cls, string):
-        """ parse a parameters file (as string) and returns a Parameters class
-        """
-        raise NotImplementedError("need to be subclassed")
+    def read_nml(cls, filename, verbose=True):
+        file_str = cls._read_to_str(filename, verbose=verbose)
+        return _parse_file_nml(cls, file_str)
+
+    def write_nml(self, filename, verbose=True):
+        file_str = _to_str_nml(self)
+        return self._write_from_str(filename, file_str, verbose)
 
     @classmethod
-    def dumps(cls, params):
-        """ Convert a list of parameters of the same group to file, for writing
-        returns : string
-        """
-        raise NotImplementedError("need to be subclassed")
+    def read_alex(cls, filename, verbose=True):
+        file_str = cls._read_to_str(filename, verbose=verbose)
+        return _parse_file_alex(cls, file_str)
 
-class AbstractLineWise(AbstractParameters):
-    """ a class to handle line-by-line parameter files (i.e. no namelists)
-    """
-    comment = "#"
-
-    @staticmethod
-    def parse_line(string):
-        " parse a line and return an instance of that parameter "
-        raise NotImplementedError("need to be subclassed")
-
-    @staticmethod
-    def to_line(param):
-        " return a line-string represention of one paramater"
-        raise NotImplementedError("need to be subclassed")
-
-    def dumps(self):
-        """ Convert a list of parameters of the same group to file, for writing
-        returns : string
-        """
-        return "\n".join( [self.to_line(p) for p in self] )
+    def write_alex(self, filename, verbose=True):
+        file_str = _to_str_alex(self)
+        return self._write_from_str(filename, file_str, verbose)
 
     @classmethod
-    def loads(cls, string):
-        """ Convert a list of parameters of the same group to file, for writing
-        returns : string
-        """
-        lines = string.split("\n")
-        params = cls()
-        for line in lines:
-            line = line.strip()
-            # is startswith("=") needed ?
-            if line == "" or line.startswith(cls.comment):
-                continue
-            try:
-                p = cls.parse_line(line.strip())
-            except Exception as error:
-                "Problem parsing line: "+line
-                raise
-            params.append(p)
-        return params
+    def read_climber2(cls, filename, verbose=True):
+        file_str = cls._read_to_str(filename, verbose=verbose)
+        return _parse_file_climber2(cls, file_str)
 
-#
-# model-specific parameters
-#
-class AlexParams(AbstractLineWise):
-    " Common format for Rembo and Sicopolis "
-
-    @staticmethod
-    def parse_line(string):
-        """ Parse one line and return a parameter instance
-        """
-        # NOTE: could be transformed as a class method
-        # to pass the Parameter instance some model-specific
-        # information, e.g. "module" or even the container class
-        # it belongs to (cls). Not needed for now.
-        line  = string.partition(":")
-        units = line[0].strip()
-        sep = "="
-        if ":" in line[2]: sep = ":"
-        line  = line[2].partition(sep)
-        name  = line[0].strip()
-        value = line[2].strip()
-        value = _parse_value(value)
-        
-        # Also save the initial part of the line for re-writing
-        line = string[0:41]
-        return Parameter(name=name, value=value, units=units, line=line) 
-
-    @staticmethod
-    def to_line(param):
-        '''Output a string suitable for parameter file'''
-        # no string markers "" needed here
-        if param.line:
-            return "{} {}".format(param.line,param.value)
-        else:
-            line = "{name} - {desc} ({units})".format(**param.__dict__)
-            return "{line:39} = {value}".format(line=line, value=param.value)
-
-
-class Climber2Params(AbstractLineWise):
-    " read CLIMBER2-type parameters"
-    module = "climber2"
-
-    @staticmethod
-    def parse_line(string):
-
-        line  = string.partition("|")
-        units = ""
-        value = line[0].strip()
-        line  = line[2].partition("|")
-        name  = line[0].strip()
-        
-        line  = string.partition("|")
-        line  = line[2].strip()
-
-        value = _parse_value(value)
-
-        return Parameter(name=name, line=line, value=value)
-
-    @staticmethod
-    def to_line(param):
-        # string marker needed, therefore repr()
-        line = param.line or "{name} : {desc} ({units})".format(**param.__dict__)
-        return " {:<9}| {}".format(repr(param.value),line)
-
-class NamelistParams(AbstractParameters):
-
-    @classmethod
-    def loads(cls, input_str):
-        nml = Namelist.parse_file(input_str)
-
-        # flatten namelist to store it in the Parameters class
-        params = cls()
-        for g in nml.groups:
-            for nm in nml.groups[g]:
-                p = Parameter(name=nm, value=nml.groups[g][nm], group=g)
-                params.append(p)
-        return params
-
-    def dumps(self):
-        # convert back to Namelist class (with groups and so)
-        nml = self.to_nml()
-        return nml.dump()
-
-    def to_nml(self):
-        " convert a list of Parameters to Namelist class "
-        groups = odict()
-        for k, g in groupby(self, lambda x: x.group):
-            groups[k] = odict([(p.name, p.value) for p in g])
-        return Namelist(groups)
+    def write_climber2(self, filename, verbose=True):
+        file_str = _to_str_climber2(self)
+        return self._write_from_str(filename, file_str, verbose)
  
 if __name__ == "__main__":
     print "Test read namelist"
-    params1 = AlexParams.read("examples/options_rembo")
-    params2 = Climber2Params.read("examples/run")
-    params3 = NamelistParams.read("examples/params.nml")
-    _ = NamelistParams.read("examples/options_sico") # as a test
+    params1 = Parameters.read_alex("examples/options_rembo")
+    params2 = Parameters.read_climber2("examples/run")
+    params3 = Parameters.read_nml("examples/params.nml")
 
     print "In-memory representation"
     print ""
@@ -363,14 +349,33 @@ if __name__ == "__main__":
     print ""
     print params3
 
+    print "Display string to file"
+    print ""
+    print params1.write_alex(filename=None)
+    print ""
+    print params2.write_climber2(filename=None)
+    print ""
+    # print params2.write_nml(filename=None)
+    print params3.write_nml(filename=None)
 
-    print "Dumped-string, write-ready"
+    print "Actual writing to file"
     print ""
-    print params1.dumps()
+    print params1.write_alex(filename="alex.tmp")
+    print params2.write_climber2(filename="climber2.tmp")
+    print params3.write_nml(filename="nml.tmp")
+
+
     print ""
-    print params2.dumps()
+    print "Namelist to Alex"
     print ""
-    print params3.dumps()
+    print params3.write_nml(filename=None)
+
+    print ""
+    print "Alex to Namelist"
+    print ""
+    # param1 = param1.copy() # avoid in-place modif
+    params1.set_group("sico")
+    params1.write_nml(filename=None)
 
     print " "
     print "Test access parameter"
@@ -391,6 +396,4 @@ if __name__ == "__main__":
     print " "
     params3.set('beta', 40000, group='dynamics')
     params4 = params3.filter(group='dynamics')
-    print params4.dumps()
-
-    params1.write("tmp.txt")
+    print params4.write_nml(filename=None)
