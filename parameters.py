@@ -2,6 +2,7 @@
 """
 # from __future__ import absolute_import
 from collections import OrderedDict as odict
+import warnings
 from itertools import groupby
 from namelist import Namelist
 # from models import climber2, sico, rembo, outletglacier
@@ -219,7 +220,7 @@ class AbstractLineWise(AbstractParameters):
         raise NotImplementedError("need to be subclassed")
 
     @staticmethod
-    def to_line(self, param):
+    def to_line(param):
         " return a line-string represention of one paramater"
         raise NotImplementedError("need to be subclassed")
 
@@ -228,6 +229,26 @@ class AbstractLineWise(AbstractParameters):
         returns : string
         """
         return "\n".join( [self.to_line(p) for p in self] )
+
+    @classmethod
+    def loads(cls, string):
+        """ Convert a list of parameters of the same group to file, for writing
+        returns : string
+        """
+        lines = string.split("\n")
+        params = cls()
+        for line in lines:
+            line = line.strip()
+            # is startswith("=") needed ?
+            if line == "" or line.startswith(cls.comment):
+                continue
+            try:
+                p = cls.parse_line(line.strip())
+            except Exception as error:
+                "Problem parsing line: "+line
+                raise
+            params.append(p)
+        return params
 
 #
 # model-specific parameters
@@ -266,21 +287,6 @@ class AlexParams(AbstractLineWise):
             line = "{name} - {desc} ({units})".format(**param.__dict__)
             return "{line:39} = {value}".format(line=line, value=param.value)
 
-    @classmethod
-    def loads(cls, string):
-        """ Read a file of parameters and returns a Parameters instance
-        """
-        # Loop to find parameters and load them into class
-        lines = string.split("\n")
-        params = cls()  # this class, to have the appropriate dumps / loads methods
-        for line in lines:
-            first = ""
-            if len(line) > 41: first = line.strip()[0]
-            if not first == "" and not first == cls.comment and line[40] in ("=",":"):
-                p = cls.parse_line(line)
-                params.append(p)
-        return params
-
 
 class Climber2Params(AbstractLineWise):
     " read CLIMBER2-type parameters"
@@ -307,20 +313,6 @@ class Climber2Params(AbstractLineWise):
         # string marker needed, therefore repr()
         line = param.line or "{name} : {desc} ({units})".format(**param.__dict__)
         return " {:<9}| {}".format(repr(param.value),line)
-
-    @classmethod
-    def loads(cls, string):
-        """ Read CLIMBER-2 parameter config and returns a Parameters instance
-        """ 
-        lines = string.split("\n")
-        params = cls()
-        for line in lines:
-            if line.strip() == "": continue
-            first = line.strip()[0]
-            if not first == "" and not first == "=":
-                p = cls.parse_line(line.strip())
-                params.append(p)
-        return params
 
 class NamelistParams(AbstractParameters):
 
@@ -353,6 +345,7 @@ if __name__ == "__main__":
     params1 = AlexParams.read("examples/options_rembo")
     params2 = Climber2Params.read("examples/run")
     params3 = NamelistParams.read("examples/params.nml")
+    _ = NamelistParams.read("examples/options_sico") # as a test
 
     print "In-memory representation"
     print ""

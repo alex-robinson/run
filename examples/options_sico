@@ -1,0 +1,160 @@
+# SICO Options  (a10,a30,a1,f15.0)
+#  * Just ensure = appears at the 41st column to assign a parameter value
+#  * First 9 characters are reserved for units, then 1 character separator
+#  * For character parameters, use : instead of =
+
+## ------- Specification of current simulation --------
+    --   :   DOMAIN                     : GRL
+    --   :   RUNNAME_0                  : grl20
+    --   :   SICO_VERSION               : 2.9a
+    --   :   DATE                       : 2009-09-10
+    --   :   INPATH                     : in_sico
+##  ------ Grid related parameters
+    --   :   GRID                       =  1
+    --   :   X0                         = -800.0
+    --   :   Y0                         = -3400.0
+    --   :   DX                         =  20.0
+
+    --   :   IMAX                       = 75
+    --   :   JMAX                       = 140
+    --   :   KCMAX                      = 80
+    --   :   KTMAX                      = 10
+    --   :   KRMAX                      = 10
+    --   :   DEFORM                     = 2.0
+#  ------------------
+    --   :   TIME_INIT_0                = 1990.0
+    --   :   TIME_END_0                 = 4350.0
+    --   :   DTIME_0                    =    2.0
+    --   :   DTIME_TEMP_0               =    2.0
+    --   :   DTIME_WSS_0                =  100.0
+    --   :   DTIME_SER_0                =   50.0
+    yr   :   DTIME_OUT_0                = 25000.0
+    --   :   YEAR_SEC                   = 31556926.0
+#  ------------------
+    --   :   OUTSER                     = 3
+    --   :   ERGDAT                     = 1
+    --   :   NETCDF                     = 2
+#  ------------------
+    --   :   CALCMOD                    = 1
+#  ------------------
+    --   :   MARGIN                     = 1
+    --   :   Z_MAR_0                    = -500.0
+    --   :   FACT_Z_MAR                 = 2.50
+#  ------------------
+    --   :   FLOW_LAW                   = 1
+    --   :   FIN_VISC                   = 1
+    --   :   GR_SIZE                    = 1.e-3
+#  ------------------
+    --   :   ENHMOD                     = 3
+    --   :   ENH                        = 3.0
+    --   :   DNS                        = 1
+#  ------------------
+    --   :   ANF_DAT                    = 1
+    --   :   TOPO_PRESENT_FILE          : topo.20km.nc
+    --   :   ANFDATNAME                 : restart.01.nc
+    --   :   ANFDATPATH                 : output/test
+#  ------------------
+    --   :   REBOUND                    = 1
+    --   :   FRAC_LLRA                  = 1.0
+    --   :   Q_LITHO                    = 1
+#  ------------------
+    --   :   ZS_EVOL                    = 1
+    --   :   CALCZS                     = 3
+    --   :   FLUX_CORR                  = 1
+    --   :   OVI_WEIGHT                 = 1.5
+    --   :   OMEGA_SOR                  = 1.0
+#  ------------------
+    --   :   ADV_HOR                    = 2
+    --   :   ADV_VERT                   = 2
+  m2/s   :   AGEDIFF                    = 5.e-8
+    --   :   M_AGE                      = 200.0
+#  ------------------
+    --   :   TOPOGRAD                   = 1
+#  ------------------
+    --   :   clim_coupled               = 0
+    --   :   Lfac                       = 0
+#  ------------------
+    --   :   TSURFACE                   = 1
+    --   :   DELTA_TS0                  = 0.0
+    --   :   SINE_AMPLIT                = 10.0
+    --   :   SINE_PERIOD                = 100000.0
+    --   :   GRIP_TEMP_FILE             : wre1000_temp.dat
+    --   :   GRIP_TEMP_FACT             = 2.0
+    --   :   GLAC_IND_FILE              : grip_105ka_vostok_gi.dat
+    --   :   TEMP_MA_ANOM_FACT          = 1.9
+    --   :   TEMP_MJ_ANOM_FACT          = 1.9
+#  ------------------
+    --   :   PRECIP_PRESENT_FILE        : clim.grl.20km.bales.nc
+    --   :   ACCSURFACE                 = 1
+    --   :   ACCFACT                    = 1.0
+    --   :   GAMMA_S                    = 0.062
+    --   :   PRECIP_ANOM_FACT           = 1.0
+    --   :   PRECIP_ANOM_INTERPOL       = 2
+#  ------------------
+    --   :   ANOM_FILE                  : anom.uk.76x141.20km.nc
+#  ------------------
+    --   :   ABLSURFACE                 = 2
+    --   :   LAMBDA_LTI                 = 500.0
+    --   :   TEMP_LTI                   = -2.0
+#  ------------------
+    --   :   SEA_LEVEL                  = 1
+    --   :   Z_SL0                      = 0.0
+    --   :   SEA_LEVEL_FILE             : specmap_zsl_782kyr.dat
+    --   :   Z_SLE_FILE                 : none
+    --   :   Z_SLE_PATH                 : none
+    --   :   Z_SLE_FACT                 = 1.0
+#  ------------------
+    --   :   FRAC_DUST                  = 0.d0
+    --   :   SLIDE_LAW                  = 1
+ m/a-Pa  :   C_SLIDE_0                  = 15
+    --   :   SMW_COEFF                  = 0.0
+    --   :   R_SMW                      = 0
+    --   :   S_SMW                      = 1
+    --   :   GAMMA_SLIDE                = 1.0
+    --   :   P_WEERT_0                  = 3
+    --   :   Q_WEERT_0                  = 2
+    --   :   ICE_STREAM                 = 1
+    --   :   MASK_SEDI_FILE             : grl_bb_20_mask_sedi.dat
+ m/a-Pa  :   C_SLIDE_SEDI               = 33.6
+    --   :   SMW_COEFF_SEDI             = 0.0
+    --   :   R_SMW_SEDI                 = 0
+    --   :   S_SMW_SEDI                 = 1
+    --   :   GAMMA_SLIDE_SEDI           = 1.0
+    --   :   P_WEERT_SEDI               = 3
+    --   :   Q_WEERT_SEDI               = 2
+    --   :   stream_cut                 = 0.4
+#  ------------------
+    --   :   alpine                     = 0
+     m   :   zs_alpine                  = 1000.0
+     m   :   H_alpine                   = 10.0
+#  ------------------
+    --   :   disc                       = 1
+    --   :   disc_prep                  = 1
+ Gt/yr   :   disc_target                = 350.0
+    --   :   c_dis_0                    = 96.2
+    --   :   s_dis                      = 0.01
+    --   :   c_dis_fac                  = 1.0
+    --   :   m_D                        = 1.0
+    --   :   m_H                        = 1.0
+     m   :   cst_dist_lim               = 1.0e10
+     m   :   r_mar_eff                  = 1.2e05
+#  ------------------
+    --   :   Q_GEO_MOD                  = 1
+  mW/m2  :   Q_GEO_0                    = 50
+    --   :   Q_GEO_FILE_0               : grl20_qgeo_pol_mod2.dat
+#  ------------------
+     m   :   DH_FLOAT                   = 0.1
+    --   :   NUMDIFF_ZS                 = 0.0
+    --   :   NUMDIFF_H_T                = 0.15
+    --   :   TAU_CTS                    = 0.0
+    --   :   H_MIN                      = 1.0e-03
+    --   :   VH_MAX_0                   = 1.0e04
+    --   :   HD_MIN                     = 1.0e-15
+    --   :   HD_MAX                     = 500.0
+    --   :   QB_MIN                     = 1.0e-15
+    --   :   QB_MAX                     = 1.0e-7
+    --   :   AGE_MIN                    = 1.0e-15
+    --   :   AGE_MAX                    = 1.0e6
+    --   :   MEAN_ACCUM_0               = 3.0e2
+#  ------------------
+
