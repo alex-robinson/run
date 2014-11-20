@@ -186,13 +186,12 @@ class AbstractParameters(list):
             string = f.read()
         return cls.loads(string)
 
-    @classmethod
-    def write(cls, filename, params, verbose=True):
+    def write(self, filename, verbose=True):
         """ Write a list of parameters of the same group to file
         """
-        string = cls.dumps(params)
+        string = self.dumps()
         if verbose:
-            print "Write {} params to {}".format(cls.__name__, filename)
+            print "Write {} params to {}".format(self.__class__.__name__, filename)
         with open(filename, "w") as f:
             f.write(string)
 
@@ -392,3 +391,5 @@ if __name__ == "__main__":
     params3.set('beta', 40000, group='dynamics')
     params4 = params3.filter(group='dynamics')
     print params4.dumps()
+
+    params1.write("tmp.txt")
