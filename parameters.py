@@ -54,12 +54,10 @@ def _parse_file_linebyline_generic(cls, string, line_parser, comment="#"):
     lines = string.split("\n")
     params = cls()
     for line in lines:
-        line = line.strip()
-        # is startswith("=") needed ?
         if line == "" or line.startswith(comment):
             continue
         try:
-            p = line_parser(line.strip())
+            p = line_parser(line)
         except Exception as error:
             "Problem parsing line: "+line
             raise
