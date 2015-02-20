@@ -25,6 +25,7 @@ Continue a previous simulation with --continue:
     to continue after the previous restart.
 Otherwise keep the restart file as it was.
 """
+import subprocess
 from collections import OrderedDict
 from namelist import read_namelist_file
 import sys, os, docopt, json
@@ -42,6 +43,29 @@ def get_glacier_name():
     " get glacier name from control "
     control = read_namelist_file(NML_CONTROL)
     return control.groups['general']['name']
+    
+
+def get_checksum(codedir='./', safe=True):
+    """ return git's checksum
+    """
+    cmd = 'cd {codedir} && git log | head -1 | sed "s/commit //"'.format(codedir=codedir)
+    commit = subprocess.check_output(cmd, shell=True)
+
+    if safe:
+        cmd = 'cd {codedir} && git status | grep "Changes.*commit" \
+            || dummy_command_to_avoid_error=1'.format(codedir=codedir)
+        # cmd = 'cd {codedir} && echo $status | grep "Changes.*commit"'.format(codedir=codedir)
+        changes = subprocess.check_output(cmd, shell=True)
+        if changes != "":
+            cmd = 'cd {codedir} && git status'.format(codedir=codedir)
+            os.system(cmd)
+            y = raw_input("git directory not clean, proceed? (press 'y') ")
+            if y != 'y':
+                print "Stopped by user."
+                sys.exit()
+
+    return commit
+
 
 def main():
     args = docopt.docopt(__doc__)
